@@ -17,7 +17,9 @@ dependencies = [
     "torchsummary",
     "scipy",
     "scikit-learn",
-    "gymnasium"
+    "gymnasium",
+    "gymnasium[classic-control]",
+    "tensorflow",
 ]
 
 [project.optional-dependencies]
