@@ -65,7 +65,8 @@ class Model(nn.Module):
 
         # Loss and optimizer
 #        self.optimizer = torch.optim.Adam(self.parameters(), lr=lr)  
-        self.optimizer = torch.optim.RMSprop(self.parameters(), lr=lr)  
+        self.optimizer = torch.optim.RMSprop(self.parameters(), lr=lr)
+        # self.optimizer = torch.optim.RMSprop(self.parameters(), lr=lr, weight_decay=1e-4)
 
         summary(self, (1,dim))
 
@@ -197,7 +198,7 @@ class MCTS():
 
             while not state.terminal: 
                 action = state.select(c=c)
-                s1,r,t,_,_ = mcts_env.step(action.index)
+                s1,r,terminated,truncated,_ = mcts_env.step(action.index)
 #                print ("MCTS step <a, s, r, t>", action.index, s1, r, t)
                 if hasattr(action,'child_state'):
     # This goes by the ACTION having children, not the state; involves the question of whether we can deal with _continuous_ states where 
@@ -208,7 +209,7 @@ class MCTS():
 #                    print ("existing state" , state.index)
                     continue
                 else:
-                    state = action.add_child_state(s1,r,t,self.model) # expand
+                    state = action.add_child_state(s1,r,terminated or truncated,self.model) # expand
         #This makes a new State, which uses the network to predict pi and V but then ends this iteration of the search
         # This is where we could do a "rollout" of some length using pi, and backing out the "reward + value(from the V-net)" from a deeper level
                     # print ("expand new child state", state.index)
@@ -343,7 +344,7 @@ def agent(game,n_ep,n_mcts,max_ep_len,lr,c,gamma,data_size,batch_size,temp,n_hid
             # Make the true step
             a = np.random.choice(len(pi),p=pi)
             a_store.append(a)
-            s1,r,terminal,_,_ = Env.step(a)
+            s1,r,terminated,truncated,_ = Env.step(a)
             r = float(r)
             # test: does NN predict same action?
             netpi = model.predict_pi(state[None,])
@@ -351,11 +352,11 @@ def agent(game,n_ep,n_mcts,max_ep_len,lr,c,gamma,data_size,batch_size,temp,n_hid
             neta = argmax(netpi)
             mctsa = argmax(pi)
 
-          #  print ("True step <a,s,r,t,pi, neta, mctsa>", a, s1, r, terminal, pi, netpi, mctsa, neta)
+          #  print ("True step <a,s,r,t,pi, neta, mctsa>", a, s1, r, terminated or truncated, pi, netpi, mctsa, neta)
             R += r
             t_total += n_mcts # total number of environment steps (counts the mcts steps)                
 
-            if terminal:
+            if terminated or truncated:
                 break
             else:
                 mcts.forward(a,s1)
