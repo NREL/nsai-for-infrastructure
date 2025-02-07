@@ -91,15 +91,25 @@ class ZoningGameEnv(gym.Env):
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
 
-        self.tile_grid, self.tile_queue = None, None
-        self.observation_space = spaces.MultiDiscrete([[len(Tile)]*self.grid_size]*self.grid_size)
+        self.tile_grid, self.tile_queue, self.n_moves = None, None, None
+        grid_space = spaces.MultiDiscrete([[[len(Tile)]*self.grid_size]*self.grid_size])  # Grid is 2d space where each element has len(Tile) options
+        queue_space = spaces.MultiDiscrete([len(Tile)]*self.grid_size*self.grid_size)  # Queue is 1d space where each element has len(Tile) options
+        self.observation_space = spaces.Tuple((grid_space, queue_space))  # Note this could also be represented as a single matrix of shape 2 x (grid_size*grid_size)
         self.action_space = spaces.Discrete(self.grid_size*self.grid_size)
+
+    def _get_obs(self):
+        return (self.tile_grid, self.tile_queue)
+    
+    def _get_info(self):
+        return {}
 
     def reset(self, seed = None):
         super().reset(seed=seed)
+        self.n_moves = 0
         self.tile_grid, self.tile_queue = self._generate_problem()
         logger.debug(f"tile_grid:\n{self.tile_grid}")
         logger.debug(f"tile_queue:\n{self.tile_queue}")
+        return self._get_obs(), self._get_info()
 
     def _generate_problem(self):
         "Create and return random `tile_grid` and `tile_queue` given instance config"
@@ -118,7 +128,8 @@ class ZoningGameEnv(gym.Env):
                 n_filled += 1
         
         n_unfilled = self.grid_size*self.grid_size - n_filled
-        tile_queue = self.np_random.choice(tile_values, p=tile_p, size=n_unfilled)
+        filled_queue = self.np_random.choice(tile_values, p=tile_p, size=n_unfilled)
+        tile_queue = np.concatenate((filled_queue, np.zeros(n_filled, dtype=filled_queue.dtype)))
         return tile_grid, tile_queue
     
     def render(self):
@@ -133,17 +144,29 @@ class ZoningGameEnv(gym.Env):
         buf.seek(0)
         return buf
     
+    def step(self, action):
+        coords = (action // self.grid_size, action % self.grid_size)
+        the_tile = self.tile_queue[0]
+        self.tile_queue[:-1] = self.tile_queue[1:]
+        self.tile_queue[-1] = 0
+        self.tile_grid[*coords] = the_tile
+        terminated = (len(self.tile_queue) == 0)
+        truncated = False  # game always finishes in a reasonable number of moves, no need for truncation
+        reward = self._eval_tile_grid_score() if terminated or truncated else 0  # only reward at the end
+        if terminated:
+            logger.info(f"Finished with reward {reward}")
+        return
+    
     def _eval_tile_grid_score(self):
         "Use `eval_tile_indiv_score` to compute the sum score across the whole tile grid"
         padded_grid = pad_grid(self.tile_grid)
         total_score = 0
-        print(type(self.tile_grid))
         for row, col in np.ndindex(self.tile_grid.shape):
             score_incr = eval_tile_indiv_score(padded_grid, row, col)
             total_score += score_incr
             current_tile = Tile(self.tile_grid[row, col])
             if current_tile is not Tile.EMPTY:
-                logger.info(f"Adding {score_incr} to score for tile {current_tile.name} at {(row, col)}")
+                logger.debug(f"Adding {score_incr} to score for tile {current_tile.name} at {(row, col)}")
         return total_score
 
 gym.register(
