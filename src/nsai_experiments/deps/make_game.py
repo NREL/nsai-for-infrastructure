@@ -6,6 +6,7 @@ Custom game generation function
 import gymnasium as gym
 import numpy as np
 from .wrappers import NormalizeWrapper,ReparametrizeWrapper,PILCOWrapper,ScaleRewardWrapper,ClipRewardWrapper,ScaledObservationWrapper
+from ..zoning_game.zg_gym import ZoningGameObservationWrapper
 
 # Register deterministic FrozenLakes
 from gymnasium.envs.registration import register
@@ -54,6 +55,10 @@ def make_game(game):
         env = prepare_atari_env(env)
     else:
         env = prepare_control_env(env,game,modify)
+
+    if "ZoningGameEnv" in game:
+        print("Wrapping ZoningGameEnv observations")
+        env = ZoningGameObservationWrapper(env)
     return env
 
 def prepare_control_env(env,game,modify):

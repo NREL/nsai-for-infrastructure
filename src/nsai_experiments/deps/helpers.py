@@ -39,7 +39,8 @@ def check_space(space):
         dim = space.n
         discrete = True
     elif isinstance(space,spaces.MultiDiscrete):
-        dim = space.nvec
+        # dim = space.nvec
+        dim = len(space.nvec)
         discrete = True
     else:
         raise NotImplementedError('This type of space is not supported')

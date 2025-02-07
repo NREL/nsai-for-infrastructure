@@ -77,7 +77,9 @@ def pad_grid(unpadded_grid):
 class ZoningGameEnv(gym.Env):
     metadata = {"render_modes": ["ansi"]}
 
-    def __init__(self, grid_size = 6, initially_filled_frac = 0.4, occurrences = DEFAULT_OCCURRENCES, render_mode = "ansi"):
+    def __init__(self,
+                 grid_size = 6, initially_filled_frac = 0.4, occurrences = DEFAULT_OCCURRENCES,
+                 render_mode = "ansi", max_moves = 100):
         """
         Arguments (all have sensible defaults):
           `grid_size = 6`: side length of the square grid
@@ -86,16 +88,20 @@ class ZoningGameEnv(gym.Env):
           `render_mode = "ansi"`: gymnasium render mode: `"ansi"` returns a string-like output, `None` does no rendering
         """
         self.grid_size = grid_size
+        total_grid_cells = self.grid_size*self.grid_size
         self.initially_filled_frac = initially_filled_frac
         self.occurrences = {k: v/sum(occurrences.values()) for k, v in occurrences.items()}
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
+        if max_moves < total_grid_cells:
+            logger.warning(f"max_moves={max_moves} is less than total number of cells, {total_grid_cells}")
+        self.max_moves = max_moves
 
         self.tile_grid, self.tile_queue, self.n_moves = None, None, None
-        grid_space = spaces.MultiDiscrete([[[len(Tile)]*self.grid_size]*self.grid_size])  # Grid is 2d space where each element has len(Tile) options
-        queue_space = spaces.MultiDiscrete([len(Tile)]*self.grid_size*self.grid_size)  # Queue is 1d space where each element has len(Tile) options
+        grid_space = spaces.MultiDiscrete([[len(Tile)]*self.grid_size]*self.grid_size)  # Grid is 2d space where each element has len(Tile) options
+        queue_space = spaces.MultiDiscrete([len(Tile)]*total_grid_cells)  # Queue is 1d space where each element has len(Tile) options
         self.observation_space = spaces.Tuple((grid_space, queue_space))  # Note this could also be represented as a single matrix of shape 2 x (grid_size*grid_size)
-        self.action_space = spaces.Discrete(self.grid_size*self.grid_size)
+        self.action_space = spaces.Discrete(total_grid_cells)
 
     def _get_obs(self):
         return (self.tile_grid, self.tile_queue)
@@ -103,7 +109,8 @@ class ZoningGameEnv(gym.Env):
     def _get_info(self):
         return {}
 
-    def reset(self, seed = None):
+    def reset(self, seed = None, options = None):
+        assert options is None
         super().reset(seed=seed)
         self.n_moves = 0
         self.tile_grid, self.tile_queue = self._generate_problem()
@@ -140,22 +147,27 @@ class ZoningGameEnv(gym.Env):
         print(f"Tile grid:\n{self.tile_grid}", file=buf)
         print(f"Tile queue (leftmost next): {self.tile_queue}", file=buf)
         print(f"where {', '.join([f'{x.value} = {x.name}' for x in Tile])}.", file=buf)
-        print(f"Current grid score is {self._eval_tile_grid_score()}.", file=buf)
+        print(f"After {self.n_moves} moves, current grid score is {self._eval_tile_grid_score()}.", file=buf)
         buf.seek(0)
         return buf
     
-    def step(self, action):
+    def step(self, action, warn_invalid = False):
         coords = (action // self.grid_size, action % self.grid_size)
-        the_tile = self.tile_queue[0]
-        self.tile_queue[:-1] = self.tile_queue[1:]
-        self.tile_queue[-1] = 0
-        self.tile_grid[*coords] = the_tile
+        if Tile(self.tile_grid[*coords]) is not Tile.EMPTY:
+            if warn_invalid:
+                logger.warning(f"Action {action} (coords {coords}) is invalid, skipping")
+        else:
+            self.tile_grid[*coords] = self.tile_queue[0]
+            self.tile_queue[:-1] = self.tile_queue[1:]
+            self.tile_queue[-1] = 0
+        self.n_moves += 1
+
         terminated = (len(self.tile_queue) == 0)
-        truncated = False  # game always finishes in a reasonable number of moves, no need for truncation
+        truncated = self.n_moves >= self.max_moves
         reward = self._eval_tile_grid_score() if terminated or truncated else 0  # only reward at the end
         if terminated:
             logger.info(f"Finished with reward {reward}")
-        return
+        return self._get_obs(), reward, terminated, truncated, self._get_info()
     
     def _eval_tile_grid_score(self):
         "Use `eval_tile_indiv_score` to compute the sum score across the whole tile grid"
@@ -168,6 +180,15 @@ class ZoningGameEnv(gym.Env):
             if current_tile is not Tile.EMPTY:
                 logger.debug(f"Adding {score_incr} to score for tile {current_tile.name} at {(row, col)}")
         return total_score
+
+class ZoningGameObservationWrapper(gym.ObservationWrapper):
+    def __init__(self, sub_env):
+        super().__init__(sub_env)
+        total_grid_cells = sub_env.unwrapped.grid_size*sub_env.unwrapped.grid_size
+        self.observation_space = spaces.MultiDiscrete([len(Tile)]*total_grid_cells*2)
+    
+    def observation(self, sub_obs):
+        return np.concat((sub_obs[0].flatten(), sub_obs[1]))
 
 gym.register(
     id="zg/ZoningGameEnv-v0",

@@ -48,7 +48,7 @@ class Model(nn.Module):
         self.state_dim, self.state_discrete  = check_space(Env.observation_space)
         if not self.action_discrete: 
             raise ValueError('Continuous action space not implemented')
-        dim = np.array(math.prod(self.state_dim))
+        dim = np.array(math.prod(np.array(self.state_dim).reshape(-1)))#*6  # TODO hardcoded
 
         self.flatten_layer = nn.Flatten()
         self.lin1 = nn.Linear(dim, n_hidden_units)
@@ -71,6 +71,8 @@ class Model(nn.Module):
         summary(self, (1,dim))
 
     def forward(self, x):
+        x = torch.as_tensor(x, dtype=torch.int64)
+        # x = torch.nn.functional.one_hot(x, num_classes=6)  # TODO hardcoded
         x = torch.as_tensor(x, dtype=torch.float32)
         x = self.flatten_layer(x)
         x = self.activation(self.lin1(x))
