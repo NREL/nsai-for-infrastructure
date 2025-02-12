@@ -1,6 +1,11 @@
-from .zg_gym import Tile
+from collections import namedtuple
+
+from nltk.tokenize import wordpunct_tokenize
+from nltk.parse.recursivedescent import RecursiveDescentParser
 from nltk import CFG, PCFG, Nonterminal
 import numpy as np
+
+from .zg_gym import Tile
 
 MAX_NUM = 6  # TODO do not hardcode
 ZONING_GAME_GRAMMAR_STRING = f"""
@@ -23,6 +28,14 @@ ZONING_GAME_GRAMMAR_STRING = f"""
                                      """
 ZONING_GAME_GRAMMAR = PCFG.fromstring(ZONING_GAME_GRAMMAR_STRING)
 
+RuleNT = namedtuple("Rule", ["subject", "constraint"])
+OrNT = namedtuple("Or", ["sub1", "sub2"])
+AndNT = namedtuple("And", ["sub1", "sub2"])
+NotNT = namedtuple("Not", ["sub"])
+DistanceConstraintNT = namedtuple("DistanceConstraint", ["distance", "object"])
+ClusterCountConstraintNT = namedtuple("ClusterCountConstraint", ["count"])
+ClusterSizeConstraintNT = namedtuple("ClusterSizeConstraint", ["size"])
+
 def generate_one_probabilistic(pcfg: PCFG, current_nonterminal = None, seed = None, rng = None):
     assert seed is None or rng is None
     if seed is not None:
@@ -36,5 +49,101 @@ def generate_one_probabilistic(pcfg: PCFG, current_nonterminal = None, seed = No
         result += generate_one_probabilistic(pcfg, fragment, seed=seed, rng=rng) if isinstance(fragment, Nonterminal) else [fragment]
     return result
 
-def print_ruleset(ruleset):
-    print(" ".join(ruleset).replace("; ", ";\n"))
+def format_ruleset(ruleset):
+    return " ".join(ruleset).replace("; ", ";\n")
+
+ZONING_GAME_PARSER = RecursiveDescentParser(ZONING_GAME_GRAMMAR)
+def parse_formatted_ruleset(formatted_ruleset):
+    root, = ZONING_GAME_PARSER.parse(wordpunct_tokenize(formatted_ruleset)+[""])
+    return root
+
+def _process_subject_object(subject_object_ast):
+    so_type = subject_object_ast.label()
+    so_id, = subject_object_ast
+    match so_type:
+        case "Tile":
+            return Tile[so_id]
+        case "Location":
+            return so_id
+        case "Number":
+            return int(so_id)
+        case _:
+            raise ValueError()
+
+def _process_base_constraint(base_constraint_ast):
+    match base_constraint_ast.label():
+        case "DistanceConstraint":
+            _, dist, _, obj = base_constraint_ast
+            dist, = dist
+            obj, = obj
+            return DistanceConstraintNT(int(dist), _process_subject_object(obj))
+        case "ClusterCountConstraint":
+            _, count, _ = base_constraint_ast
+            count, = count
+            return ClusterCountConstraintNT(int(count))
+        case "ClusterSizeConstraint":
+            _, size, _ = base_constraint_ast
+            size, = size
+            return ClusterSizeConstraintNT(int(size))
+        case _:
+            raise ValueError()
+
+def _process_constraint(constraint_ast):
+    match len(constraint_ast):
+        case 1:
+            return _process_base_constraint(constraint_ast[0])
+        case 4:
+            _, not_str, sub, _ = constraint_ast
+            assert not_str == "not"
+            return NotNT(_process_constraint(sub))
+        case 5:
+            _, sub1, op_str, sub2, _ = constraint_ast
+            match op_str:
+                case "and":
+                    op = AndNT
+                case "or":
+                    op = OrNT
+                case _:
+                    raise ValueError()
+            return op(_process_constraint(sub1), _process_constraint(sub2))
+        case _:
+            raise ValueError()
+
+def _process_rule(rule_ast):
+    subject, _, constraint = rule_ast
+    subject, = subject
+    subject = _process_subject_object(subject)
+    constraint = _process_constraint(constraint)
+    return RuleNT(subject, constraint)
+
+def _extract_rule_list(parsed_ruleset):
+    "A parser of sorts that turns a ruleset AST into an intermediate representation that is easier to work with"
+    if len(parsed_ruleset) == 3:  # Handles `Policy -> Rule ";" Policy`
+        rule, _, rest = parsed_ruleset
+        return [_process_rule(rule)] + _extract_rule_list(rest)
+    else:  # Handles `Policy -> ""`
+        assert list(parsed_ruleset) == [""]
+        return []
+
+def _interpret_one_constraint(constraint, tile_grid, my_row, my_col):
+    args = (tile_grid, my_row, my_col)
+    return True  # TODO placeholder
+
+def _interpret_indiv(rule_list, tile_grid, my_row, my_col):
+    "Like `interpret_indiv` but operates on a rule list rather than a raw AST"
+    my_tile = Tile(tile_grid[my_row, my_col])
+    my_rules = filter(lambda rule: rule.subject == my_tile, rule_list)
+    return all([_interpret_one_constraint(rule.constraint, tile_grid, my_row, my_col) for rule in my_rules])
+
+def interpret_indiv(parsed_ruleset, tile_grid, my_row, my_col):
+    """
+    Check the given tile of the tile grid against the parsed ruleset AST and return whether
+    it complies. If we view sentences from the zoning game language as programs that
+    describe which tile configurations are allowed, this is an interpreter of such programs.
+    """
+    rule_list = _extract_rule_list(parsed_ruleset)
+    return _interpret_indiv(rule_list, tile_grid, my_row, my_col)
+
+def interpret_grid(parsed_ruleset, tile_grid):
+    "Like `interpret_indiv` but returns a Boolean array of per-tile results across an entire tile grid."
+    pass  # TODO placeholder
