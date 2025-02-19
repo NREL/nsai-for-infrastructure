@@ -1,3 +1,4 @@
+import logging
 from collections import namedtuple
 
 from nltk.tokenize import wordpunct_tokenize
@@ -5,7 +6,10 @@ from nltk.parse.recursivedescent import RecursiveDescentParser
 from nltk import CFG, PCFG, Nonterminal
 import numpy as np
 
-from .zg_gym import Tile
+from .zg_gym import Tile, Location, calc_distance_to_tile, calc_distance_to_location
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 MAX_NUM = 6  # TODO do not hardcode
 ZONING_GAME_GRAMMAR_STRING = f"""
@@ -23,7 +27,7 @@ ZONING_GAME_GRAMMAR_STRING = f"""
     Subject -> Tile [1.0]
     Object -> Tile [0.5] | Location [0.5]
     Tile -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Tile if x is not Tile.EMPTY])}
-    Location -> "board_center" [0.2] | "board_edge" [0.5] | "board_corner" [0.3]
+    Location -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Location])}
     Number -> {" | ".join([f"\"{x}\" [{1/(MAX_NUM-1):.4f}]" for x in range(1, MAX_NUM)])}
                                      """
 ZONING_GAME_GRAMMAR = PCFG.fromstring(ZONING_GAME_GRAMMAR_STRING)
@@ -64,9 +68,7 @@ def _process_subject_object(subject_object_ast):
         case "Tile":
             return Tile[so_id]
         case "Location":
-            return so_id
-        case "Number":
-            return int(so_id)
+            return Location[so_id]
         case _:
             raise ValueError()
 
@@ -125,14 +127,46 @@ def _extract_rule_list(parsed_ruleset):
         assert list(parsed_ruleset) == [""]
         return []
 
-def _interpret_one_constraint(constraint, tile_grid, my_row, my_col):
-    args = (tile_grid, my_row, my_col)
+def _calc_shortest_distance(tile_grid, from_row, from_col, to_object):
+    match to_object:
+        case Tile():
+            return calc_distance_to_tile(tile_grid, from_row, from_col, to_object)
+        case Location():
+            return calc_distance_to_location(tile_grid, from_row, from_col, to_object)
+        case _:
+            raise ValueError(f"Cannot calculate shortest distance to {to_object}")
+    return 0
+
+def _interpret_one_constraint(constraint, tile_grid, my_row, my_col, depth = 0):
+    logger.info(f"  {'  '*depth}Interpreting {constraint} on {(my_row, my_col)}")
+    # Fix some stuff for ease of recursion:
+    subinterpret = lambda subconstraint: _interpret_one_constraint(subconstraint, tile_grid, my_row, my_col, depth = depth+1)
+    # TODO rewrite in object-oriented style
+    match constraint:
+        case OrNT():
+            # Using `|` instead of `or` to avoid short circuiting for now
+            return subinterpret(constraint.sub1) | subinterpret(constraint.sub2)
+        case AndNT():
+            return subinterpret(constraint.sub1) & subinterpret(constraint.sub2)
+        case NotNT():
+            return not subinterpret(constraint.sub)
+        case DistanceConstraintNT():
+            shortest_distance = _calc_shortest_distance(tile_grid, my_row, my_col, constraint.object)
+            logger.info(f"  {'  '*depth}  - found shortest distance {shortest_distance} vs. criterion {constraint.distance}")
+            return _calc_shortest_distance(tile_grid, my_row, my_col, constraint.object) <= constraint.distance
+        case ClusterCountConstraintNT():
+            print("in ClusterCountConstraintNT")
+        case ClusterSizeConstraintNT():
+            print("in ClusterSizeConstraintNT")
+        case _:
+            raise ValueError(f"Failed to evaluate constraint {constraint}")
     return True  # TODO placeholder
 
 def _interpret_indiv(rule_list, tile_grid, my_row, my_col):
     "Like `interpret_indiv` but operates on a rule list rather than a raw AST"
+    logger.info(f"Interpreting on {Tile(tile_grid[my_row, my_col])} at {(my_row, my_col)}")
     my_tile = Tile(tile_grid[my_row, my_col])
-    my_rules = filter(lambda rule: rule.subject == my_tile, rule_list)
+    my_rules = list(filter(lambda rule: rule.subject == my_tile, rule_list))
     return all([_interpret_one_constraint(rule.constraint, tile_grid, my_row, my_col) for rule in my_rules])
 
 def interpret_indiv(parsed_ruleset, tile_grid, my_row, my_col):
