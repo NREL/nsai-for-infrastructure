@@ -164,6 +164,11 @@ class ZoningGameEnv(gym.Env):
     def _get_obs(self):
         return (self.tile_grid, self.tile_queue)
     
+    def _get_terminated_truncated(self):
+        terminated = (all(self.tile_queue == 0))
+        truncated = self.n_moves >= self.max_moves
+        return terminated, truncated
+    
     def _get_info(self):
         return {}
 
@@ -202,10 +207,12 @@ class ZoningGameEnv(gym.Env):
         if self.render_mode is None: return
         assert self.render_mode == "ansi"
         buf = io.StringIO()
+        terminated, truncated = self._get_terminated_truncated()
         print(f"Tile grid:\n{self.tile_grid}", file=buf)
         print(f"Tile queue (leftmost next): {self.tile_queue}", file=buf)
         print(f"where {', '.join([f'{x.value} = {x.name}' for x in Tile])}.", file=buf)
-        print(f"After {self.n_moves} moves, current grid score is {self._eval_tile_grid_score()}.", file=buf)
+        print(f"After {self.n_moves} moves, current grid score is {self._eval_tile_grid_score()};", end=" ", file=buf)
+        print(f"terminated = {terminated}, truncated = {truncated}.", file=buf)
         buf.seek(0)
         return buf
     
@@ -217,7 +224,7 @@ class ZoningGameEnv(gym.Env):
         coords = (action // self.grid_size, action % self.grid_size)
         if Tile(self.tile_grid[*coords]) is not Tile.EMPTY:
             if on_invalid is not None:
-                invalid_msg = f"Action {action} (coords {coords}) is invalid, skipping"
+                invalid_msg = f"Action {action} (coords {tuple(map(int, coords))}) is invalid, skipping"
                 if on_invalid == "warn": logger.warning(invalid_msg)
                 elif on_invalid == "error": raise ValueError(invalid_msg)
         else:
@@ -226,8 +233,7 @@ class ZoningGameEnv(gym.Env):
             self.tile_queue[-1] = 0
         self.n_moves += 1
 
-        terminated = (all(self.tile_queue == 0))
-        truncated = self.n_moves >= self.max_moves
+        terminated, truncated = self._get_terminated_truncated()
         reward = self._eval_tile_grid_score() if terminated or truncated else 0  # only reward at the end
         if terminated:
             logger.info(f"Finished with reward {reward}")

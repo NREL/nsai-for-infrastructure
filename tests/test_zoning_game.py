@@ -1,6 +1,17 @@
 import numpy as np
 
 from nsai_experiments.zoning_game.zg_gym import ZoningGameEnv, Tile, eval_tile_indiv_score, pad_grid
+from nsai_experiments.zoning_game.zg_policy import play_one_game, create_policy_random, create_policy_indiv_greedy, create_policy_total_greedy
+
+FAST_TEST = False  # Whether to skip some extra test cases to speed up the tests
+
+# Some aliases to make it easier to build tile grids from scratch
+t0 = Tile.EMPTY.value
+tr = Tile.RESIDENTIAL.value
+tc = Tile.COMMERCIAL.value
+ti = Tile.INDUSTRIAL.value
+td = Tile.DOWNTOWN.value
+tp = Tile.PARK.value
 
 def _blank_of_size(grid_size, fill_tile = Tile.EMPTY):
     return np.ones((grid_size, grid_size), dtype=np.int32) * fill_tile.value
@@ -251,10 +262,6 @@ def test_final_scoring():
     wins.
     """
 
-    t0 = Tile.EMPTY.value
-    tr = Tile.RESIDENTIAL.value
-    ti = Tile.INDUSTRIAL.value
-
     # The world is half RESIDENTIAL, half INDUSTRIAL; put the remaining RESIDENTIAL and INDUSTRIAL tiles with the others
     _test_head_to_head(np.array([
         [tr, tr, tr, ti, ti, ti],
@@ -264,3 +271,89 @@ def test_final_scoring():
         [tr, t0, tr, ti, ti, ti],
         [tr, tr, tr, ti, ti, ti],
     ]), [tr, ti], 25)
+
+    # The world is all PARK; put the DOWNTOWN in the middle and the RESIDENTIAL elsewhere
+    _test_head_to_head(np.array([
+        [tp, tp, tp, tp, tp, tp],
+        [tp, tp, tp, tp, tp, tp],
+        [tp, tp, t0, tp, tp, tp],
+        [tp, tp, tp, tp, tp, tp],
+        [tp, tp, tp, tp, t0, tp],
+        [tp, tp, tp, tp, tp, tp],
+    ]), [td, tr], 14)
+
+    # The world is all RESIDENTIAL; put the INDUSTRIAL near the center line and the COMMERCIAL elsewhere
+    _test_head_to_head(np.array([
+        [tr, tr, tr, tr, tr, tr],
+        [tr, t0, tr, t0, tr, tr],
+        [tr, tr, tr, tr, tr, tr],
+        [tr, tr, tr, tr, tr, tr],
+        [tr, tr, tr, tr, tr, tr],
+        [tr, tr, tr, tr, tr, tr],
+    ]), [ti, tc], 9)
+
+def test_policy_basics():
+    policy_creators_to_test = [create_policy_random, create_policy_indiv_greedy, create_policy_total_greedy]
+    env = ZoningGameEnv()
+    for create_policy in policy_creators_to_test:
+        for policy_seed in range(0, 5 if FAST_TEST else 10):
+            my_policy = create_policy(seed=policy_seed)
+            for env_seed in range(10, 15 if FAST_TEST else 20):
+                final_env, obs, reward, terminated, truncated, info = \
+                    play_one_game(my_policy, env=env, seed=env_seed, on_invalid="error")
+                assert final_env == env
+                assert terminated
+                assert not truncated
+                tile_grid, tile_queue = obs
+                assert np.count_nonzero(tile_grid == Tile.EMPTY.value) == 0
+                assert np.count_nonzero(tile_queue) == 0
+
+def test_greedy_policies():
+    env = ZoningGameEnv()
+    env.reset(seed=0)
+    # In this grid, the individually greedy best choice for the park is in between the two
+    # downtowns (+6 individual) but the "total greedy" best choice is between the four
+    # residentials (+8 group)
+    test_grid = np.array([
+        [t0, tr, t0, t0, t0, t0],
+        [tr, t0, tr, t0, t0, t0],
+        [t0, tr, td, t0, td, t0],
+        [t0, t0, t0, t0, t0, t0],
+        [t0, t0, t0, t0, t0, t0],
+        [t0, t0, t0, t0, t0, t0],
+    ])
+    test_queue = np.zeros(env.grid_size*env.grid_size, dtype=env.tile_queue.dtype)
+    test_queue[:np.sum(test_grid == Tile.EMPTY.value)] = tp
+
+    for policy_seed in range(0, 10):
+        indiv_greedy_policy = create_policy_indiv_greedy(seed=policy_seed)
+        env.reset(seed=0)
+        env.tile_grid = test_grid.copy()
+        env.tile_queue = test_queue.copy()
+        obs = env.step(35)[0]
+        assert indiv_greedy_policy(obs) == 15
+    
+    for policy_seed in range(0, 10):
+        total_greedy_policy = create_policy_total_greedy(seed=policy_seed)
+        env.reset(seed=0)
+        env.tile_grid = test_grid.copy()
+        env.tile_queue = test_queue.copy()
+        obs = env.step(35)[0]
+        assert total_greedy_policy(obs) == 7
+
+def test_policy_intercomparison():
+    "Test that policies we expect to perform better than random actually do, etc."
+    policy_creators_to_test = [create_policy_random, create_policy_indiv_greedy, create_policy_total_greedy]
+    results = {}  # dict from policy creator name to sum of rewards when playing with that policy
+    env = ZoningGameEnv()
+    for create_policy in policy_creators_to_test:
+        results[create_policy.__name__] = 0
+        for policy_seed in range(0, 5 if FAST_TEST else 10):
+            my_policy = create_policy(seed=policy_seed)
+            for env_seed in range(10, 15 if FAST_TEST else 20):
+                _, _, reward, _, _, _ = play_one_game(my_policy, env=env, seed=env_seed, on_invalid="error")
+                results[create_policy.__name__] += reward
+    
+    assert results["create_policy_indiv_greedy"] > results["create_policy_random"]
+    assert results["create_policy_total_greedy"] > results["create_policy_random"]
+    assert results["create_policy_total_greedy"] > results["create_policy_indiv_greedy"]
