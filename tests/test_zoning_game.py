@@ -1,7 +1,9 @@
 import numpy as np
+from nltk.tree import Tree
 
 from nsai_experiments.zoning_game.zg_gym import ZoningGameEnv, Tile, eval_tile_indiv_score, pad_grid
 from nsai_experiments.zoning_game.zg_policy import play_one_game, create_policy_random, create_policy_indiv_greedy, create_policy_total_greedy
+from nsai_experiments.zoning_game.zg_cfg import ZONING_GAME_GRAMMAR, RuleNT, generate_one_probabilistic, format_ruleset, parse_to_ast, parse_to_nt, interpret_grid
 
 FAST_TEST = False  # Whether to skip some extra test cases to speed up the tests
 
@@ -12,6 +14,9 @@ tc = Tile.COMMERCIAL.value
 ti = Tile.INDUSTRIAL.value
 td = Tile.DOWNTOWN.value
 tp = Tile.PARK.value
+
+T_ = True
+F_ = False
 
 def _blank_of_size(grid_size, fill_tile = Tile.EMPTY):
     return np.ones((grid_size, grid_size), dtype=np.int32) * fill_tile.value
@@ -357,3 +362,126 @@ def test_policy_intercomparison():
     assert results["create_policy_indiv_greedy"] > results["create_policy_random"]
     assert results["create_policy_total_greedy"] > results["create_policy_random"]
     assert results["create_policy_total_greedy"] > results["create_policy_indiv_greedy"]
+
+def test_cfg_generation_and_parsing():
+    for generation_seed in range(30 if FAST_TEST else 100):
+        generated_tokens = generate_one_probabilistic(ZONING_GAME_GRAMMAR, seed=generation_seed)
+        generated_ruleset = format_ruleset(generated_tokens)
+
+        ast = parse_to_ast(generated_ruleset)
+        assert isinstance(ast, Tree)
+
+        nt1 = parse_to_nt(generated_ruleset)
+        nt2 = parse_to_nt(ast)
+        assert nt1 == nt2
+        assert all([isinstance(r, RuleNT) for r in nt2])
+
+def test_cfg_interpreter():
+    test_grid_1 = np.array([
+        [tr, t0, t0, tr, tr, tr],
+        [t0, t0, t0, t0, t0, t0],
+        [t0, t0, t0, t0, t0, t0],
+        [t0, t0, t0, t0, t0, t0],
+        [t0, t0, t0, tr, t0, t0],
+        [t0, t0, t0, t0, t0, t0],
+    ])
+    assert (interpret_grid(
+        "RESIDENTIAL must be_within 3 tiles_of RESIDENTIAL ;",
+        test_grid_1
+    ) == np.array([
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, F_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        "RESIDENTIAL must form_fewer_than 2 separate_clusters ;",
+        test_grid_1
+    ) == np.array([
+        [F_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, F_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        "RESIDENTIAL must form_cluster_with_fewer_than 2 tiles ;",
+        test_grid_1
+    ) == np.array([
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        "RESIDENTIAL must ( not be_within 3 tiles_of RESIDENTIAL ) ;",
+        test_grid_1
+    ) == np.array([
+        [F_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+    ])).all()
+
+    test_grid_2 = np.array([
+        [ti, ti, ti, td, td, td],
+        [ti, ti, ti, td, td, td],
+        [ti, ti, ti, td, td, td],
+        [td, td, td, ti, ti, ti],
+        [td, td, td, ti, ti, ti],
+        [td, td, td, ti, ti, ti],
+    ])
+    assert (interpret_grid(
+        "DOWNTOWN must be_within 1 tiles_of BOARD_CENTER ;",
+        test_grid_2
+    ) == np.array([
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, F_, F_],
+        [F_, F_, T_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        "DOWNTOWN must ( be_within 1 tiles_of BOARD_VERTICAL_MEDIAN and be_within 1 tiles_of BOARD_HORIZONTAL_MEDIAN ) ;",
+        test_grid_2
+    ) == np.array([
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, F_, F_],
+        [F_, F_, T_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        """
+        DOWNTOWN must be_within 1 tiles_of BOARD_VERTICAL_MEDIAN ;
+        DOWNTOWN must be_within 1 tiles_of BOARD_HORIZONTAL_MEDIAN ;
+        """,
+        test_grid_2
+    ) == np.array([
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, F_, F_, F_],
+        [T_, T_, T_, T_, F_, F_],
+        [F_, F_, T_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+        [F_, F_, F_, T_, T_, T_],
+    ])).all()
+    assert (interpret_grid(
+        "INDUSTRIAL must ( be_within 1 tiles_of BOARD_VERTICAL_MEDIAN or be_within 1 tiles_of BOARD_HORIZONTAL_MEDIAN ) ;",
+        test_grid_2
+    ) == np.array([
+        [F_, F_, T_, T_, T_, T_],
+        [F_, F_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, T_, T_],
+        [T_, T_, T_, T_, F_, F_],
+        [T_, T_, T_, T_, F_, F_],
+    ])).all()

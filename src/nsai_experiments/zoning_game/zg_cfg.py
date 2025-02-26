@@ -32,7 +32,7 @@ ZONING_GAME_GRAMMAR_STRING = f"""
     Tile -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Tile if x is not Tile.EMPTY])}
     Location -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Location])}
     Number -> {" | ".join([f"\"{x}\" [{1/(MAX_NUM-1):.4f}]" for x in range(1, MAX_NUM)])}
-                                     """
+    """
 ZONING_GAME_GRAMMAR = PCFG.fromstring(ZONING_GAME_GRAMMAR_STRING)
 
 RuleNT = namedtuple("Rule", ["subject", "constraint"])
@@ -43,18 +43,33 @@ DistanceConstraintNT = namedtuple("DistanceConstraint", ["distance", "object"])
 ClusterCountConstraintNT = namedtuple("ClusterCountConstraint", ["count"])
 ClusterSizeConstraintNT = namedtuple("ClusterSizeConstraint", ["size"])
 
-def generate_one_probabilistic(pcfg: PCFG, current_nonterminal = None, seed = None, rng = None):
-    assert seed is None or rng is None
-    if seed is not None:
-        rng = np.random.default_rng(seed=seed)
-        seed = None
+def _generate_one_probabilistic_helper(pcfg, current_nonterminal, rng, recursion_limit):
+    if recursion_limit < 0:
+        return None
     if current_nonterminal is None: current_nonterminal = pcfg.start()
     current_prods = list(pcfg.productions(lhs = current_nonterminal))
     selected_prod = (np.random if rng is None else rng).choice(current_prods, p = [prod.prob() for prod in current_prods])
     result = []
     for fragment in selected_prod.rhs():
-        result += generate_one_probabilistic(pcfg, fragment, seed=seed, rng=rng) if isinstance(fragment, Nonterminal) else [fragment]
+        next_token = _generate_one_probabilistic_helper(
+            pcfg, fragment, rng=rng, recursion_limit=recursion_limit-1) if isinstance(fragment, Nonterminal) else [fragment]
+        if next_token is None: return None
+        result += next_token
     return result
+
+def generate_one_probabilistic(pcfg: PCFG, current_nonterminal=None, seed=None, rng=None, max_tokens=250, recursion_limit=25):
+    # NOTE max_tokens and recursion_limit exist to try to avoid overly complicated results
+    # that the parser runs into a RecursionError processing, but there may be better approaches
+    assert seed is None or rng is None
+    if seed is not None:
+        rng = np.random.default_rng(seed=seed)
+        seed = None
+    result = _generate_one_probabilistic_helper(pcfg, current_nonterminal, rng, recursion_limit=recursion_limit)
+    if (result is not None) and (len(result) <= max_tokens):
+        return result
+    else:  # If we hit the recursion limit or it's too long, try again
+        # NOTE this outer recursive step could get pretty long if we're not careful
+        return generate_one_probabilistic(pcfg, current_nonterminal, seed, rng, max_tokens)
 
 def format_ruleset(ruleset):
     return " ".join(ruleset).replace("; ", ";\n")
