@@ -199,8 +199,22 @@ class ZoningGameEnv(gym.Env):
         truncated = self.n_moves >= self.max_moves
         return terminated, truncated
     
-    def _get_info(self):
-        return {}
+    def _get_average_scores(self):
+        padded_grid = pad_grid(self.tile_grid)
+        scores = {tile: [] for tile in Tile if tile is not Tile.EMPTY}
+        for row, col in np.ndindex(self.tile_grid.shape):
+            current_tile = Tile(self.tile_grid[row, col])
+            if current_tile is not Tile.EMPTY:
+                score = eval_tile_indiv_score(padded_grid, row, col)
+                scores[current_tile].append(score)
+        average_scores = {tile: (sum(scores[tile]) / len(scores[tile]) if scores[tile] else 0) for tile in scores}
+        return {"average_scores": average_scores}
+    
+    def _get_info(self, average_scores = False):
+        info = {}
+        if average_scores:
+            info.update(self._get_average_scores())
+        return info
 
     def reset(self, seed = None, options = None):
         assert options is None
@@ -267,7 +281,7 @@ class ZoningGameEnv(gym.Env):
         reward = self._eval_tile_grid_score() if terminated or truncated else 0  # only reward at the end
         if terminated:
             logger.info(f"Finished with reward {reward}")
-        return self._get_obs(), reward, terminated, truncated, self._get_info()
+        return self._get_obs(), reward, terminated, truncated, self._get_info(average_scores = terminated or truncated)
     
     def _eval_tile_grid_score(self):
         "Use `eval_tile_indiv_score` to compute the sum score across the whole tile grid"

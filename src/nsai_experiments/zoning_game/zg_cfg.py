@@ -27,9 +27,10 @@ ZONING_GAME_GRAMMAR_STRING = f"""
     DistanceConstraint -> "be_within" Number "tiles_of" Object [1.0]
     ClusterCountConstraint -> "form_fewer_than" Number "separate_clusters" [1.0]
     ClusterSizeConstraint -> "form_cluster_with_fewer_than" Number "tiles" [1.0]
-    Subject -> Tile [1.0]
-    Object -> Tile [0.5] | Location [0.5]
-    Tile -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Tile if x is not Tile.EMPTY])}
+    Subject -> SubjectTile [1.0]
+    Object -> ObjectTile [0.5] | Location [0.5]
+    SubjectTile -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Tile if x is not Tile.EMPTY])}
+    ObjectTile -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile))}]" for x in Tile])}
     Location -> {" | ".join([f"\"{x.name}\" [{1/(len(Tile)-1):.4f}]" for x in Location])}
     Number -> {" | ".join([f"\"{x}\" [{1/(MAX_NUM-1):.4f}]" for x in range(1, MAX_NUM)])}
     """
@@ -83,7 +84,7 @@ def _process_subject_object(subject_object_ast):
     so_type = subject_object_ast.label()
     so_id, = subject_object_ast
     match so_type:
-        case "Tile":
+        case "Tile" | "SubjectTile" | "ObjectTile":
             return Tile[so_id]
         case "Location":
             return Location[so_id]

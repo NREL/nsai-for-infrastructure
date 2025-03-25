@@ -1,4 +1,6 @@
 import numpy as np
+from multiprocessing import Pool
+import logging
 
 from .zg_gym import ZoningGameEnv
 from .zg_cfg import interpret_valid_moves, _parse_if_necessary
@@ -40,7 +42,43 @@ def create_policy_cfg_indiv_greedy(ruleset, rng = None, seed=None, legal_moves_d
     """
     return create_policy_cfg_with_fallback(ruleset, create_policy_indiv_greedy, rng=rng, seed=seed, legal_moves_decider=legal_moves_decider)
 
-def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy, control_policy_creator=None, policy_seeds = range(0, 10), env_seeds = range(10, 20), on_invalid = None):
+def _compute_info_summary(infos):
+    return {
+        "average_scores": {
+            k: np.mean([info["average_scores"][k] for info in infos]).item()
+            for k in infos[0]["average_scores"]
+        },
+        **{
+            k: [info[k] for info in infos]
+            for k in infos[0] if k != "average_scores"
+        }
+    }
+
+def _evaluate_policies_for_seed(policy_seed, ruleset, fallback_policy_creator, control_policy_creator, env_seeds, env, on_invalid):
+    logging.getLogger("nsai_experiments.zoning_game.zg_cfg").setLevel(logging.ERROR)
+    logging.getLogger("nsai_experiments.zoning_game.zg_gym").setLevel(logging.ERROR)
+
+    ruleset_policy = create_policy_cfg_with_fallback(ruleset, fallback_policy_creator, seed=policy_seed)
+    control_policy = None if control_policy_creator is None else control_policy_creator(seed=policy_seed)
+
+    local_ruleset_score = 0
+    local_control_score = 0
+    local_ruleset_infos = []
+    local_control_infos = []
+
+    for env_seed in env_seeds:
+        _, _, ruleset_reward, _, _, ruleset_info = play_one_game(ruleset_policy, env=env, seed=env_seed, on_invalid=on_invalid)
+        local_ruleset_score += ruleset_reward
+        local_ruleset_infos.append(ruleset_info)
+
+        if control_policy is None: continue
+        _, _, control_reward, _, _, control_info = play_one_game(control_policy, env=env, seed=env_seed, on_invalid=on_invalid)
+        local_control_score += control_reward
+        local_control_infos.append(control_info)
+
+    return local_ruleset_score, local_control_score, local_ruleset_infos, local_control_infos
+
+def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy, control_policy_creator=None, policy_seeds = range(0, 10), env_seeds = range(10, 20), on_invalid = None, skip_control = False):
     """
     Run a bunch of games with the given `ruleset` and `fallback_policy_creator`, and also
     run those same games with just the `control_policy_creator` (same as
@@ -49,17 +87,30 @@ def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy
     # TODO test
     
     if control_policy_creator is None: control_policy_creator = fallback_policy_creator
+    if skip_control: control_policy_creator = None
     env = ZoningGameEnv()
+
     ruleset_score = 0
     control_score = 0
+    ruleset_infos = []
+    control_infos = []
 
-    for policy_seed in policy_seeds:
-        ruleset_policy = create_policy_cfg_with_fallback(ruleset, fallback_policy_creator, seed=policy_seed)
-        control_policy = control_policy_creator(seed=policy_seed)
+    with Pool() as pool:
+        results = pool.starmap(
+            _evaluate_policies_for_seed,
+            [(policy_seed, ruleset, fallback_policy_creator, control_policy_creator, env_seeds, env, on_invalid)
+             for policy_seed in policy_seeds]
+        )
+    
+    for local_ruleset_score, local_control_score, local_ruleset_infos, local_control_infos in results:
+        ruleset_score += local_ruleset_score
+        ruleset_infos.extend(local_ruleset_infos)
+        if skip_control: continue
+        control_score += local_control_score
+        control_infos.extend(local_control_infos)
 
-        for env_seed in env_seeds:
-            _, _, ruleset_reward, _, _, _ = play_one_game(ruleset_policy, env=env, seed=env_seed, on_invalid=on_invalid)
-            _, _, control_reward, _, _, _ = play_one_game(control_policy, env=env, seed=env_seed, on_invalid=on_invalid)
-            ruleset_score += ruleset_reward
-            control_score += control_reward
-    return ruleset_score.item(), control_score.item()
+    ruleset_info = _compute_info_summary(ruleset_infos)
+    if not skip_control: control_info = _compute_info_summary(control_infos)
+
+    if skip_control: return ruleset_score.item(), ruleset_info
+    return ruleset_score.item(), control_score.item(), ruleset_info, control_info
