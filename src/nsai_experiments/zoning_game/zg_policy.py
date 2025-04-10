@@ -35,20 +35,25 @@ def _evaluate_move(evaluator, tile_grid, next_tile, move):
     tile_grid[row, col] = next_tile
     return evaluator(tile_grid, row, col)
 
-def _create_policy_greedy(evaluator, rng = None, seed=None, legal_moves_decider=get_legal_moves):
+def _create_policy_greedy(evaluator, rng = None, seed=None, legal_moves_decider=get_legal_moves, deterministic = False):
     """
     Given an `evaluator` function that takes a `tile_grid` and a `row` and `col` and returns
     a value, creates a policy that plays the move that always maximizes that value, breaking
     ties randomly.
     """
-    myrand = np.random.default_rng(seed=seed) if rng is None else rng
+    if not deterministic:
+        myrand = np.random.default_rng(seed=seed) if rng is None else rng
     def policy_greedy(obs):
         tile_grid, tile_queue = obs
+        n_grid_spaces = tile_grid.shape[0]*tile_grid.shape[1]
         next_tile = tile_queue[0]
         move_options = legal_moves_decider(obs)
         move_scores = [_evaluate_move(evaluator, tile_grid, next_tile, move) for move in move_options]
         max_score = max(move_scores)
-        move_weights = [(1+myrand.random() if score == max_score else 0) for score in move_scores]
+        move_weights = \
+            [(n_grid_spaces-move if score == max_score else 0) for move, score in zip(move_options, move_scores)] \
+            if deterministic else \
+            [(1+myrand.random() if score == max_score else 0) for score in move_scores]
         return move_options[np.argmax(move_weights)]
     return policy_greedy
 
@@ -66,6 +71,12 @@ def create_policy_indiv_greedy(rng = None, seed=None, legal_moves_decider=get_le
     """
     return _create_policy_greedy(evaluator=_create_indiv_greedy_evaluator(), rng=rng, seed=seed, legal_moves_decider=legal_moves_decider)
 
+def create_policy_indiv_greedy_deterministic(rng = None, seed=None, legal_moves_decider=get_legal_moves):
+    """
+    Like `create_policy_indiv_greedy` but breaks ties by tile index (lower is better) rather than randomly
+    """
+    return _create_policy_greedy(evaluator=_create_indiv_greedy_evaluator(), rng=rng, seed=seed, legal_moves_decider=legal_moves_decider, deterministic=True)
+
 def _create_total_greedy_evaluator():
     padded_grid = blank_of_size(0)
     def _total_greedy_evaluator(tile_grid, row, col):
@@ -82,3 +93,9 @@ def create_policy_total_greedy(rng = None, seed=None, legal_moves_decider=get_le
     the current point in time, breaking ties randomly.
     """
     return _create_policy_greedy(evaluator=_create_total_greedy_evaluator(), rng=rng, seed=seed, legal_moves_decider=legal_moves_decider)
+
+def create_policy_total_greedy_deterministic(rng = None, seed=None, legal_moves_decider=get_legal_moves):
+    """
+    Like `create_policy_total_greedy` but breaks ties by tile index (lower is better) rather than randomly
+    """
+    return _create_policy_greedy(evaluator=_create_total_greedy_evaluator(), rng=rng, seed=seed, legal_moves_decider=legal_moves_decider, deterministic=True)
