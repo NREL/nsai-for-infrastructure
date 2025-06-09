@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,6 +19,37 @@ class ZoningGameGame(EnvGame):
     def get_action_mask(self):
         tile_grid, _ = self.obs  # type: ignore
         return np.ravel(tile_grid == Tile.EMPTY.value)
+    
+    # Purely for performance, we override stash_state and unstash_state to avoid generic deepcopy
+    # TODO once we have determinism, verify that things run exactly the same with and without this
+    def stash_state(self):
+        return (
+            tuple(x.copy() for x in self.obs),  # type: ignore
+            self.reward,
+            self.terminated,
+            self.truncated,
+            copy.deepcopy(self.info),
+            self.env.tile_grid.copy(),  # type: ignore
+            self.env.tile_queue.copy(),  # type: ignore
+            self.env.n_moves  # type: ignore
+        )
+    
+    def unstash_state(self, state):
+        """
+        Returns this game reverted to the state represented by `state`, which came from
+        `stash_state`. After this is called, the object on which it is called should no
+        longer be used.
+        """
+        obs, reward, terminated, truncated, info, tile_grid, tile_queue, n_moves = state
+        self.obs = obs
+        self.reward = reward
+        self.terminated = terminated
+        self.truncated = truncated
+        self.info = info
+        self.env.tile_grid = tile_grid  # type: ignore
+        self.env.tile_queue = tile_queue  # type: ignore
+        self.env.n_moves = n_moves  # type: ignore
+        return self
 
 
 class ZoningGameModel(nn.Module):
@@ -73,19 +106,23 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         "policy_weight": 4.0,
     }
 
-    def __init__(self, grid_size = 6, training_params = {}):
+    def __init__(self, grid_size = 6, training_params = {}, device = None):
         model = ZoningGameModel(grid_size = grid_size)
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
         self.grid_size = grid_size
 
+        self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
+        print(f"Will be running on device '{self.DEVICE}'")
+
     def train(self, examples, needs_reshape=True):
         model = self.model
+        model.to(self.DEVICE)
         tp = self.training_params
         policy_weight = tp["policy_weight"]
         l1_lambda = tp["l1_lambda"]
 
-        # model = model.to(device)
+        model = model.to(self.DEVICE)
         criterion_value = nn.MSELoss()
         criterion_policy = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=tp["learning_rate"], weight_decay=tp["weight_decay"])
@@ -105,6 +142,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
             dataset = examples
         
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=tp["batch_size"], shuffle=True)
+        print(f"Training with {len(train_loader)} batches of size {tp['batch_size']}")
 
         train_mini_losses = []
         train_losses = []
@@ -114,7 +152,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
             model.train()
             train_loss = 0.0
             for inputs, targets_policy, targets_value in train_loader:
-                # inputs, targets_value, targets_policy = inputs.to(device), targets_value.to(device), targets_policy.to(device)
+                inputs, targets_value, targets_policy = inputs.to(self.DEVICE), targets_value.to(self.DEVICE), targets_policy.to(self.DEVICE)
                 optimizer.zero_grad()
                 outputs_policy, outputs_value = model(inputs)
                 loss_value = criterion_value(outputs_value.squeeze(), targets_value)
@@ -138,9 +176,10 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         return model, train_mini_losses, train_losses
 
     def predict(self, state):
+        self.model.cpu()
         # Here is the place to prepare raw game state observations for the neural network
         nn_input = torch.tensor(flatten_zg_obs(state)).reshape(1, -1)
         with torch.no_grad():
-            policy, value = self.model.forward(nn_input)
+            policy, value = self.model(nn_input)
             policy_prob = F.softmax(policy, dim=-1)
         return policy_prob.numpy().squeeze(), value.item()

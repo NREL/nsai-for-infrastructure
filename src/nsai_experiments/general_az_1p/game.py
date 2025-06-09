@@ -1,3 +1,4 @@
+import copy
 from abc import ABC, abstractmethod
 from typing import Tuple, Any, TypeVar, Generic, Hashable
 
@@ -78,7 +79,24 @@ class Game(ABC, Generic[ObsType, ActType]):
         self.truncated = truncated
         self.info = info
         return obs, reward, terminated, truncated, info
+    
+    def stash_state(self) -> Any:
+        """
+        Returns a representation of the game state such that the game can be restored later
+        after step() has been called several times. The default implementation relies on
+        `deepcopy`, subclasses may wish to provide a more performant implementation. If
+        overriding, you must handle self.obs, self.reward, self.terminated, self.truncated,
+        and self.info.
+        """
+        return copy.deepcopy(self)
 
+    def unstash_state(self, state: Any):
+        """
+        Returns this game reverted to the state represented by `state`, which came from
+        `stash_state`. After this is called, the object on which it is called should no
+        longer be used. Override this if you override `stash_state`.
+        """
+        return state
 
 class EnvGame(Game[ObsType, ActType]):
     """

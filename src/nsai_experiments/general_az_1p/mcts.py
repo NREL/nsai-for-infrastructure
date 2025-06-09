@@ -58,10 +58,9 @@ class MCTS():
         """
         mystate = self.game.hashable_obs
         for i in range(self.n_simulations):
-            old_game = self.game
-            self.game = copy.deepcopy(self.game)
+            old_game_state = self.game.stash_state()
             self.search()
-            self.game = old_game
+            self.game = self.game.unstash_state(old_game_state)
             assert mystate == self.game.hashable_obs
         
         mynode = self.nodes[mystate]
