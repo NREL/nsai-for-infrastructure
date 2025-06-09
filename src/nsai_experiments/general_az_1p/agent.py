@@ -38,7 +38,7 @@ class Agent():
             move_probs = mcts.perform_simulations()
             train_examples.append((self.game.obs, (move_probs, None)))
             selected_move = np.random.choice(len(move_probs), p=move_probs)
-            print(f"Taking move {selected_move} with probability {move_probs[selected_move]:.2f}")  # TODO logging
+            # print(f"Taking move {selected_move} with probability {move_probs[selected_move]:.2f}")  # TODO logging
             self.game.step_wrapper(selected_move)
             rewards.append(self.game.reward)
             if self.game.terminated or self.game.truncated:
@@ -63,24 +63,28 @@ class Agent():
         # Play a bunch of games and keep track of the training examples
         all_train_examples = []
         for i in range(self.n_games_per_train):
-            print(f"Starting game {i+1} of {self.n_games_per_train}")  # TODO logging
-            self.game.reset()  # TODO random seed management
+            # print(f"Starting game {i+1} of {self.n_games_per_train}")  # TODO logging
+            self.game.reset_wrapper()  # TODO random seed management
             train_examples = self.play_single_game()
             all_train_examples.extend(train_examples)
         
         # Save an old Agent to pit ourselves against, then train the network
-        self.game.reset()
+        self.game.reset_wrapper()
         self_before_training = copy.deepcopy(self)
         self.net.train(all_train_examples)
 
         # Play a bunch of games to evaluate new vs. old networks
         old_rewards, new_rewards = [], []
         for i in range(self.n_games_per_eval):
-            self.game.reset()
+            self.game.reset_wrapper()
             self_before_training.game = copy.deepcopy(self.game)
             
-            _, (_, reward_from_old) = self_before_training.play_single_game()
-            _, (_, reward_from_new) = self.play_single_game()
+            # NOTE here we are using the final reward to compare performance -- we may in
+            # fact want to use a (weighted?) sum of stepwise rewards
+            self_before_training.play_single_game()
+            reward_from_old = self_before_training.game.reward
+            self.play_single_game()
+            reward_from_new = self.game.reward
 
             old_rewards.append(reward_from_old)
             new_rewards.append(reward_from_new)

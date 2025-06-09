@@ -40,7 +40,7 @@ class MCTS():
     c_exploration: float  # Exploration constant for UCB
 
     def __init__(self, game: Game, net: PolicyValueNet,
-                 n_simulations: int = 1000,
+                 n_simulations: int = 25,
                  temperature: float = 1.0,
                  c_exploration: float = 1.0):
         self.game = game

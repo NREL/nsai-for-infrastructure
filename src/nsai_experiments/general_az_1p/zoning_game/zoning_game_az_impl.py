@@ -95,9 +95,10 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         # `examples` is already in the proper format, perhaps because the network is being
         # tested outside the AlphaZero context; for this, pass `needs_reshape=False`.
         if needs_reshape:
-            states = torch.tensor([flatten_zg_obs(state) for state, (_, _) in examples])
-            policies = torch.tensor([policy for _, (policy, _) in examples])
-            values = torch.tensor([value for _, (_, value) in examples])
+            # PERF we could use a single Python loop for all three of these
+            states = torch.from_numpy(np.array([flatten_zg_obs(state) for state, (_, _) in examples], dtype=np.int64))
+            policies = torch.from_numpy(np.array([policy for _, (policy, _) in examples], dtype=np.float32))
+            values = torch.from_numpy(np.array([value for _, (_, value) in examples], dtype=np.float32))
             dataset = torch.utils.data.TensorDataset(states, policies, values)
         else:
             print("Skipping reshape of `examples`.")
