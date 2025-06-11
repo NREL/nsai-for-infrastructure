@@ -1,6 +1,10 @@
 from typing import Any
 import warnings
 import copy
+import time
+from multiprocessing import Pool
+import logging
+import itertools
 
 import numpy as np
 
@@ -18,13 +22,15 @@ class Agent():
     threshold_to_keep: float  # Threshold for win rate to keep the new network
     reward_discount: float  # For the case where only reward is at the end, set to 1.0 to use end reward at all steps
     mcts_params: dict  # Passed through to MCTS constructor
+    n_procs: int | None  # Number of processes to use in the `multiprocessing.Pool()`; if None, use all available cores, if <= 0 do not use multiprocessing
 
     def __init__(self, game: Game, net: PolicyValueNet,
                  n_games_per_train: int = 100,
-                 n_games_per_eval: int = 10,
+                 n_games_per_eval: int = 20,
                  threshold_to_keep: float = 0.55,
                  reward_discount: float = 1.0,
-                 mcts_params: dict | None = None):
+                 mcts_params: dict | None = None,
+                 n_procs: int | None = None):
         self.game = game
         self.n_games_per_train = n_games_per_train
         self.n_games_per_eval = n_games_per_eval
@@ -32,6 +38,7 @@ class Agent():
         self.net = net
         self.reward_discount = reward_discount
         self.mcts_params = mcts_params if mcts_params is not None else {}
+        self.n_procs = n_procs
 
     def play_single_game(self, max_moves: int = 10_000):
         train_examples = []
@@ -62,14 +69,50 @@ class Agent():
         
         return train_examples
     
+    def _play_for_examples(self, i):
+        # print(i)
+        logging.getLogger().setLevel(logging.WARN)
+        self.game.reset_wrapper()
+        return self.play_single_game()
+    
+    def _play_for_eval(self, i, self_before_training):
+        # print(i)
+        logging.getLogger().setLevel(logging.WARN)
+        self.game.reset_wrapper()
+        self_before_training.game = copy.deepcopy(self.game)
+        
+        # NOTE here we are using the final reward to compare performance -- we may in
+        # fact want to use a (weighted?) sum of stepwise rewards
+        self_before_training.play_single_game()
+        reward_from_old = self_before_training.game.reward
+        self.play_single_game()
+        reward_from_new = self.game.reward
+        return reward_from_old, reward_from_new
+    
+    def _maybe_pool(self, fn, n_iterations, *args):
+        """
+        Call function `fn` `n_iterations` times, passing `args` to each call. If
+        `self.n_procs` is None or >= 0, construct a `multiprocessing.Pool` and use
+        `Pool.starmap`; otherwise use `itertools.starmap`.
+        """
+        arg_tuples = [(i, *args) for i in range(n_iterations)]
+        if self.n_procs is None or self.n_procs >= 0:
+            with Pool(processes=self.n_procs) as pool:
+                results = pool.starmap(fn, arg_tuples)
+        else:
+            results = itertools.starmap(fn, arg_tuples)
+        return results
+
     def play_and_train(self):
         # Play a bunch of games and keep track of the training examples
         new_train_examples = []  # PERF consider using a deque for efficiency
-        for i in range(self.n_games_per_train):
-            # print(f"Starting game {i+1} of {self.n_games_per_train}")  # TODO logging
-            self.game.reset_wrapper()  # TODO random seed management
-            train_examples = self.play_single_game()
+
+        start_time = time.time()
+        train_example_sets = self._maybe_pool(self._play_for_examples, self.n_games_per_train)
+        for train_examples in train_example_sets:
             new_train_examples.extend(train_examples)
+        elapsed = time.time() - start_time
+        print(f"..examples done in {elapsed:.2f} seconds")
         
         self.all_training_examples.extend(new_train_examples)
         # TODO currently we never discard old training examples; eventually we probably should
@@ -78,24 +121,24 @@ class Agent():
         self.game.reset_wrapper()
         self_before_training = copy.deepcopy(self)
         print(f"Training on {len(self.all_training_examples)} examples")
+        start_time = time.time()
         self.net.train(self.all_training_examples)
+        elapsed = time.time() - start_time
+        print(f"..training done in {elapsed:.2f} seconds")
 
         # Play a bunch of games to evaluate new vs. old networks
         old_rewards, new_rewards = [], []
-        for i in range(self.n_games_per_eval):
-            self.game.reset_wrapper()
-            self_before_training.game = copy.deepcopy(self.game)
-            
-            # NOTE here we are using the final reward to compare performance -- we may in
-            # fact want to use a (weighted?) sum of stepwise rewards
-            self_before_training.play_single_game()
-            reward_from_old = self_before_training.game.reward
-            self.play_single_game()
-            reward_from_new = self.game.reward
+        start_time = time.time()
+        # TODO hack: get the network back onto the CPU so multiprocessing can handle it (probably we want an actual interface for this)
+        _ = self.net.predict(self.game.obs)
+        eval_results = self._maybe_pool(self._play_for_eval, self.n_games_per_eval, self_before_training)
+        for old_reward, new_reward in eval_results:
+            old_rewards.append(old_reward)
+            new_rewards.append(new_reward)
 
-            old_rewards.append(reward_from_old)
-            new_rewards.append(reward_from_new)
-        
+        elapsed = time.time() - start_time
+        print(f"..evaluation done in {elapsed:.2f} seconds")
+
         # Print stats, keep new network iff it wins >= threshold_to_keep fraction of games
         old_rewards = np.array(old_rewards)
         new_rewards = np.array(new_rewards)

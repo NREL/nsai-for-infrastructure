@@ -113,7 +113,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         self.grid_size = grid_size
 
         self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
-        print(f"Will be running on device '{self.DEVICE}'")
+        print(f"Neural network training will occur on device '{self.DEVICE}'")
 
     def train(self, examples, needs_reshape=True):
         model = self.model
