@@ -6,14 +6,14 @@ build-backend = "setuptools.build_meta"
 name = "nsai_experiments"
 version = "0.1"
 readme = "README.md"
-requires-python = ">= 3.10"
+requires-python = ">= 3.9"  # prefer 3.12 if possible
 dependencies = [
     "numpy",
     "pandas",
     "matplotlib",
     "ipykernel",
     "nltk",
-    "torch >= 2.6",
+    "torch == 2.2",
     "torchsummary",
     "scipy",
     "scikit-learn",

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from nsai_experiments.general_az_1p.game import EnvGame
 from nsai_experiments.general_az_1p.policy_value_net import TorchPolicyValueNet
+from nsai_experiments.general_az_1p.utils import get_accelerator
 
 class CumulativeRewardWrapper(gym.Wrapper):
     """Wrapper that changes reward behavior: 0 at every step, total steps at termination."""
@@ -84,8 +85,10 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
         model = CartPoleModel(n_hidden_layers=n_hidden_layers, hidden_size=hidden_size)
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
-        self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
+        
+        self.DEVICE = get_accelerator() if device is None else device
         print(f"Neural network training will occur on device '{self.DEVICE}'")
+
         
     def train(self, examples, needs_reshape=True):
         model = self.model

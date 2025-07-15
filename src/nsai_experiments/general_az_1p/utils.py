@@ -19,3 +19,15 @@ def use_deterministic_cuda():
     # Experimentally, both of these seem fine
     # os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
+def get_accelerator():
+    # The following would work on recent PyTorch:
+    # (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu")
+    # but we want to support PyTorch 2.2, so:
+    import torch  # need to be able to run the other utils before importing torch
+    if torch.cuda.is_available():
+        return "cuda"
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return "mps"  # Apple Silicon GPU
+    else:
+        return "cpu"
