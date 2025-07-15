@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Iterable
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -11,7 +11,7 @@ class PolicyValueNet(ABC):
         pass
 
     @abstractmethod
-    def train(self, examples: list[tuple[Any, tuple[Any, Any]]]):
+    def train(self, examples: Iterable[tuple[Any, tuple[Any, Any]]]):
         """
         Takes a list of training examples, where each example is a tuple of the form
         `(state, (policy, value))`, where `state` is the state observation in the exact

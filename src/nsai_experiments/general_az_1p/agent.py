@@ -21,12 +21,13 @@ class Agent():
     # State
     game: Game
     net: PolicyValueNet
-    all_training_examples: list[tuple[Any, tuple[Any, float]]] = []  # Accumulated training examples (state, (policy, reward))
+    all_training_examples: list[list[tuple[Any, tuple[Any, float]]]] = []  # Accumulated training examples (state, (policy, reward))
     rngs: dict[str, np.random.Generator]
 
     # Config
     n_games_per_train: int  # Number of games to play for training examples per training call
     n_games_per_eval: int  # Number of games to play in the pitting step per training call
+    n_past_iterations_to_train: int | None  # Number of past iterations to use for training, where an iteration contains `n_games_per_train` games; if None, use all past iterations
     threshold_to_keep: float  # Threshold for win rate to keep the new network
     reward_discount: float  # For the case where only reward is at the end, set to 1.0 to use end reward at all steps
     mcts_params: dict  # Passed through to MCTS constructor
@@ -35,6 +36,7 @@ class Agent():
     def __init__(self, game: Game, net: PolicyValueNet,
                  n_games_per_train: int = 100,
                  n_games_per_eval: int = 20,
+                 n_past_iterations_to_train: int = 20,
                  threshold_to_keep: float = 0.55,
                  reward_discount: float = 1.0,
                  mcts_params: dict | None = None,
@@ -43,6 +45,7 @@ class Agent():
         self.game = game
         self.n_games_per_train = n_games_per_train
         self.n_games_per_eval = n_games_per_eval
+        self.n_past_iterations_to_train = n_past_iterations_to_train
         self.threshold_to_keep = threshold_to_keep
         self.net = net
         self.reward_discount = reward_discount
@@ -149,8 +152,10 @@ class Agent():
         elapsed = time.time() - start_time
         print(f"..games done in {elapsed:.2f} seconds")
         
-        self.all_training_examples.extend(new_train_examples)
-        # TODO currently we never discard old training examples; eventually we probably should
+        self.all_training_examples.append(new_train_examples)
+        if self.n_past_iterations_to_train is not None and len(self.all_training_examples) > self.n_past_iterations_to_train:
+            self.all_training_examples.pop(0)
+        flat_examples = list(itertools.chain.from_iterable(self.all_training_examples))
 
         # Save an old Agent to pit ourselves against, then train the network
         self.game.reset_wrapper()
@@ -166,9 +171,9 @@ class Agent():
         assert all(np.isclose(p1, p2))
         assert np.isclose(v1, v2)
 
-        print(f"Training on {len(self.all_training_examples)} examples")
+        print(f"Training on {len(flat_examples)} examples")
         start_time = time.time()
-        self.net.train(self.all_training_examples)
+        self.net.train(flat_examples)
         elapsed = time.time() - start_time
         print(f"..training done in {elapsed:.2f} seconds")
 
@@ -209,5 +214,5 @@ class Agent():
     
     def play_train_multiple(self, n_trains: int):
         for i in range(n_trains):
-            print(f"Training iteration {i+1} of {n_trains}: will play {self.n_games_per_train} games, train, and evaluate on {self.n_games_per_eval} games")
+            print(f"\nTraining iteration {i+1} of {n_trains}: will play {self.n_games_per_train} games, train, and evaluate on {self.n_games_per_eval} games")
             self.play_and_train()
