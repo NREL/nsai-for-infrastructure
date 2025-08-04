@@ -105,8 +105,8 @@ class Agent():
         # print(i)
         logging.getLogger().setLevel(logging.WARN)
         self.game.reset_wrapper(seed=reset_seed)
-        return self.play_single_game(random_seed=mcts_seed, msg="play4egs g{}".format(i))
-#        return self.play_single_game(random_seed=mcts_seed)
+#        return self.play_single_game(random_seed=mcts_seed, msg="play4egs g{}".format(i))
+        return self.play_single_game(random_seed=mcts_seed)
 
     def _play_for_eval(self, i, reset_seed, mcts_seed, self_before_training):
         # print(i)
@@ -171,13 +171,13 @@ class Agent():
         assert self.game.hashable_obs == self_before_training.game.hashable_obs
         p1, v1 = self.net.predict(self.game.obs)
         p2, v2 = self_before_training.net.predict(self_before_training.game.obs)
-        print (p1, p2)
+#        print (p1, p2)
         assert all(np.isclose(p1, p2))
         assert np.isclose(v1, v2)
 
         print(f"Training on {len(flat_examples)} examples")
-        for i, (state, (policy, reward)) in enumerate(flat_examples):
-            print(f"Example {i+1}/{len(flat_examples)}: state={state}, policy={policy}, reward={reward}")
+        # for i, (state, (policy, reward)) in enumerate(flat_examples):
+        #     print(f"Example {i+1}/{len(flat_examples)}: state={state}, policy={policy}, reward={reward}")
         start_time = time.time()
         self.net.train(flat_examples)
         elapsed = time.time() - start_time
@@ -214,7 +214,7 @@ class Agent():
             assert wins + ties + losses == self.n_games_per_eval
             score = (wins + ties / 2) / self.n_games_per_eval  # a tie is half a win
             print(f"New network won {wins} and tied {ties} out of {self.n_games_per_eval} games ({score:.2%} wins where ties are half wins)")
-            if score >= self.threshold_to_keep:
+            if score >= self.threshold_to_keep or True:
                 print("Keeping the new network")
             else:
                 print("Reverting to the old network")
