@@ -113,7 +113,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
     default_training_params = {
         "epochs": 10,
         "batch_size": 1024,
-        "learning_rate": 0.001,
+        "learning_rate": 0.005,
         "l1_lambda": 0,
         "weight_decay": 5e-3,
         "policy_weight": 4.0,
@@ -131,47 +131,54 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
         print(f"Neural network training will occur on device '{self.DEVICE}'")
 
-    def train(self, examples, needs_reshape=True):
+    def _reshape_data(self, examples):
+        # The usual case is that `examples` comes from AlphaZero and is a list of tuples
+        # that will need to be reformatted.
+
+        # PERF we could use a single Python loop for all three of these
+        states = torch.from_numpy(np.array([flatten_zg_obs(state) for state, (_, _) in examples], dtype=np.int64))
+        policies = torch.from_numpy(np.array([policy for _, (policy, _) in examples], dtype=np.float32))
+        values = torch.from_numpy(np.array([value for _, (_, value) in examples], dtype=np.float32))
+        dataset = torch.utils.data.TensorDataset(states, policies, values)
+        return dataset
+    
+    def train(self, examples, val_dataset = None, needs_reshape=True, print_all_epochs=False):
         model = self.model
         model.to(self.DEVICE)
         tp = self.training_params
         policy_weight = tp["policy_weight"]
         l1_lambda = tp["l1_lambda"]
 
-        model = model.to(self.DEVICE)
         criterion_value = nn.MSELoss()
         criterion_policy = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=tp["learning_rate"], weight_decay=tp["weight_decay"])
+        dataset = self._reshape_data(examples) if needs_reshape else examples
+        if val_dataset is not None and needs_reshape:
+            val_dataset = self._reshape_data(val_dataset)
 
-        # The usual case is that `examples` comes from AlphaZero and is a list of tuples
-        # that will need to be reformatted. For convenience, we also support the case where
-        # `examples` is already in the proper format, perhaps because the network is being
-        # tested outside the AlphaZero context; for this, pass `needs_reshape=False`.
-        if needs_reshape:
-            # PERF we could use a single Python loop for all three of these
-            states = torch.from_numpy(np.array([flatten_zg_obs(state) for state, (_, _) in examples], dtype=np.int64))
-            policies = torch.from_numpy(np.array([policy for _, (policy, _) in examples], dtype=np.float32))
-            values = torch.from_numpy(np.array([value for _, (_, value) in examples], dtype=np.float32))
-            dataset = torch.utils.data.TensorDataset(states, policies, values)
-        else:
-            print("Skipping reshape of `examples`.")
-            dataset = examples
-        
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=tp["batch_size"], shuffle=True)
         print(f"Training with {len(train_loader)} batches of size {tp['batch_size']}")
 
+        if val_dataset is not None:
+            val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=tp["batch_size"], shuffle=False)
+            print(f"Validating with {len(val_loader)} batches of size {tp['batch_size']}")
+
         train_mini_losses = []
         train_losses = []
+        train_mean_maxes = []
+        val_losses = []
 
         for epoch in range(tp["epochs"]):
             # Training phase
             model.train()
             train_loss = 0.0
+            train_mean_max = 0.0
             for inputs, targets_policy, targets_value in train_loader:
                 inputs, targets_value, targets_policy = inputs.to(self.DEVICE), targets_value.to(self.DEVICE), targets_policy.to(self.DEVICE)
                 optimizer.zero_grad()
                 outputs_policy, outputs_value = model(inputs)
                 loss_value = criterion_value(outputs_value.squeeze(), targets_value)
+                mean_max = outputs_policy.softmax(dim=-1).max(dim=-1).values.mean()
                 loss_policy = criterion_policy(outputs_policy.squeeze(), targets_policy)
                 loss = loss_value + policy_weight*loss_policy
 
@@ -184,12 +191,55 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
                 loss = loss.item()
                 train_mini_losses.append(loss)
                 train_loss += loss
+                train_mean_max += mean_max
 
             train_losses.append(train_loss / len(train_loader))
-            if epoch == 0 or epoch == tp["epochs"] - 1:
-                print(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f}")
+            train_mean_maxes.append(train_mean_max / len(train_loader))
+
+            # Validation phase
+            if val_dataset is not None:
+                val_loss, val_mean_max = self.validate_inner(val_loader)
+                val_losses.append(val_loss)
+                
+                if print_all_epochs or epoch == 0 or epoch == tp["epochs"] - 1:
+                    print(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f}, Train Mean Max: {train_mean_maxes[-1]:.4f}, Val Loss: {val_loss:.4f}, Val Mean Max: {val_mean_max:.4f}")
+            else:
+                if print_all_epochs or epoch == 0 or epoch == tp["epochs"] - 1:
+                    print(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f}, Train Mean Max: {train_mean_maxes[-1]:.4f}")
 
         return model, train_mini_losses, train_losses
+
+    def validate_inner(self, val_loader):
+        model = self.model
+        model.to(self.DEVICE)
+        model.eval()
+        
+        tp = self.training_params
+        policy_weight = tp["policy_weight"]
+        criterion_value = nn.MSELoss()
+        criterion_policy = nn.CrossEntropyLoss()
+        
+        val_loss = 0.0
+        val_mean_max = 0.0
+        with torch.no_grad():
+            for inputs, targets_policy, targets_value in val_loader:
+                inputs, targets_value, targets_policy = inputs.to(self.DEVICE), targets_value.to(self.DEVICE), targets_policy.to(self.DEVICE)
+                outputs_policy, outputs_value = model(inputs)
+                loss_value = criterion_value(outputs_value.squeeze(), targets_value)
+                mean_max = outputs_policy.softmax(dim=-1).max(dim=-1).values.mean()
+                loss_policy = criterion_policy(outputs_policy.squeeze(), targets_policy)
+                loss = loss_value + policy_weight*loss_policy
+                val_loss += loss.item()
+                val_mean_max += mean_max.item()
+
+        avg_val_loss = val_loss / len(val_loader)
+        avg_val_mean_max = val_mean_max / len(val_loader)
+        return avg_val_loss, avg_val_mean_max
+
+    def validate(self, examples, needs_reshape=True):
+        dataset = self._reshape_data(examples) if needs_reshape else examples
+        val_loader = torch.utils.data.DataLoader(dataset, batch_size=self.training_params["batch_size"], shuffle=False)
+        return self.validate_inner(val_loader)
 
     def predict(self, state):
         self.model.cpu()

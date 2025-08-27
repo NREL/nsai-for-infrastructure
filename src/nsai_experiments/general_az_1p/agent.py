@@ -194,7 +194,16 @@ class Agent():
         elapsed = time.time() - start_time
         print(f"..training done in {elapsed:.2f} seconds")
 
-        # Play a bunch of games to evaluate new vs. old networks
+        score = self.pit(self_before_training)
+        if score >= self.threshold_to_keep:
+            print("Keeping the new network")
+        else:
+            print("Reverting to the old network")
+            self.net = self_before_training.net
+
+    def pit(self, self_before_training):
+        "Play a bunch of games to evaluate new vs. old networks"
+        
         old_rewards, new_rewards, old_rewards_no_mcts, new_rewards_no_mcts = [], [], [], []
         start_time = time.time()
         # TODO hack: get the network back onto the CPU so multiprocessing can handle it (probably we want an actual interface for this)
@@ -229,11 +238,7 @@ class Agent():
         assert wins + ties + losses == self.n_games_per_eval
         score = (wins + ties / 2) / self.n_games_per_eval  # a tie is half a win
         print(f"New network won {wins} and tied {ties} out of {self.n_games_per_eval} games ({score:.2%} wins where ties are half wins)")
-        if score >= self.threshold_to_keep:
-            print("Keeping the new network")
-        else:
-            print("Reverting to the old network")
-            self.net = self_before_training.net
+        return score
     
     def play_train_multiple(self, n_trains: int):
         for i in range(n_trains):
