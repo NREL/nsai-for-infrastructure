@@ -62,7 +62,7 @@ class BitStringGameGym(gym.Env):
         >>> EnvTest.action_space=spaces.Discrete(2)
         """
         self.bitflipmode = True  # "setting" a 1 flips it  back to 0
-        self.sparsemode = False  # score is only given at end of (fixed length?) episode
+        self.sparsemode = True  # score is only given at end of (fixed length?) episode
         self.nones = 2 # number of bits that are initially set to 1
 
         self.nsites = nsites
@@ -183,7 +183,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
         self.DEVICE = get_accelerator() if device is None else device
         print(f"Neural network training will occur on device '{self.DEVICE}'")
         
-    def train(self, examples, needs_reshape=True):
+    def train(self, examples, needs_reshape=True, print_all_epochs=False):
         model = self.model
         model.to(self.DEVICE)
         tp = self.training_params
@@ -243,7 +243,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
                 value_loss += loss_value
 
             train_losses.append(train_loss / len(train_loader))
-            if epoch == 0 or epoch == tp["epochs"] - 1:
+            if print_all_epochs or epoch == 0 or epoch == tp["epochs"] - 1:
             # if True:
                 print(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f} (value: {value_loss / len(train_loader):.4f}, policy: {policy_loss / len(train_loader):.4f}, weighted policy: {policy_weight * (policy_loss / len(train_loader)):.4f})")
 
@@ -341,13 +341,13 @@ if __name__ == "__main__":
     nsites = 10  # Number of bits in the bitstring
     mygame = BitStringGame(nsites = nsites)
     # mynet = CartPolePolicyValueNet(random_seed=47, training_params={"epochs": 10, "learning_rate": 0.01, "policy_weight": 4.0})
-    mynet = BitStringPolicyValueNet(random_seed=47, nsites=nsites, training_params={"epochs": 1, "learning_rate": 1e-4, "policy_weight": 1.0})
+    mynet = BitStringPolicyValueNet(random_seed=47, nsites=nsites, n_hidden_layers=1, training_params={"epochs": 5, "learning_rate": 1e-2, "policy_weight": 2.0})
     # myagent = Agent(mygame, mynet, random_seeds={"mcts": 48, "train": 49, "eval": 50}, threshold_to_keep=-1.0, n_games_per_eval=1, mcts_params={"n_simulations": 5})
     # myagent = Agent(mygame, mynet, random_seeds={"mcts": 48, "train": 49, "eval": 50}, threshold_to_keep=-1.0, n_procs=-1)
     # myagent = Agent(mygame, mynet, random_seeds={"mcts": 48, "train": 49, "eval": 50}, threshold_to_keep=-1.0)
 #    myagent = BitStringAgent(mygame, mynet, n_procs=-1, n_games_per_train=50, n_games_per_eval=10, random_seeds={"mcts": 48, "train": 49, "eval": 50}, mcts_params={"c_exploration": 1})
-    myagent = Agent(mygame, mynet, n_games_per_train=1, n_games_per_eval=10, threshold_to_keep=0.4,  n_past_iterations_to_train=5,
-                    random_seeds={"mcts": 48, "train": 49, "eval": 50}, mcts_params={"n_simulations": 30, "c_exploration": 1})
+    myagent = Agent(mygame, mynet, n_games_per_train=100, n_games_per_eval=10, threshold_to_keep=0.4,  n_past_iterations_to_train=5,
+                    random_seeds={"mcts": 48, "train": 49, "eval": 50}, mcts_params={"n_simulations": 30, "c_exploration": 0.4})
 
 
     myagent.play_train_multiple(100)    
