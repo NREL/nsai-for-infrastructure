@@ -117,7 +117,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
     default_training_params = {
         "epochs": 10,
         "batch_size": 2048,
-        "learning_rate": 0.001,
+        "learning_rate": 0.0003,
         "l1_lambda": 0,
         "weight_decay": 1e-5,
         "value_weight": 50.0,
@@ -132,6 +132,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         model = ZoningGameModel(grid_size = grid_size)
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
+        print("Neural network training params are", self.training_params)
         self.grid_size = grid_size
 
         self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
