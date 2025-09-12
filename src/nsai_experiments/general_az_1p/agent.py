@@ -150,7 +150,7 @@ class Agent():
         self.game.reset_wrapper(seed=reset_seed)
         return self.play_single_game(random_seed=mcts_seed)
 
-    def _play_for_eval(self, i, reset_seed, mcts_seed, self_before_training, try_without_mcts = False, pit_external_policy_creators_to_pit = False):
+    def _play_for_eval(self, i, reset_seed, mcts_seed, external_policy_seed, self_before_training, try_without_mcts = False, pit_external_policy_creators_to_pit = False):
         if DETAILED_DEBUG: print(i)
         logging.getLogger().setLevel(logging.WARN)
         self.game.reset_wrapper(seed=reset_seed)
@@ -174,7 +174,7 @@ class Agent():
         if pit_external_policy_creators_to_pit:
             for (policy_name, policy_creator) in self.external_policy_creators_to_pit.items():
                 policy_self = copy.deepcopy(self)
-                policy = policy_creator(seed = self._randseed("external_policy"))
+                policy = policy_creator(seed = external_policy_seed)
                 policy_self.external_policy = policy
                 all_agents[policy_name] = policy_self
 
@@ -264,7 +264,7 @@ class Agent():
         before_multiprocessing_stash = self_before_training.push_multiprocessing()
         # print("pred on old", self_before_training.game.obs, self_before_training.net.predict(self_before_training.game.obs))
         # print("pred on new", self.game.obs, self.net.predict(self.game.obs))
-        arg_tuples = [(i, self._randseed("eval"), self._randseed("mcts"), self_before_training, PIT_NO_MCTS, True) for i in range(self.n_games_per_eval)]
+        arg_tuples = [(i, self._randseed("eval"), self._randseed("mcts"), self._randseed("external_policy"), self_before_training, PIT_NO_MCTS, True) for i in range(self.n_games_per_eval)]
         eval_results = self._starmap(self._play_for_eval, arg_tuples)
         self_before_training.pop_multiprocessing(before_multiprocessing_stash)
         self.pop_multiprocessing(my_multiprocessing_stash)

@@ -130,6 +130,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         if random_seed is not None:
             torch.use_deterministic_algorithms(True, warn_only=True)
         self.rng = np.random.default_rng(random_seed)
+        self._reset_torch_rng()
         model = ZoningGameModel(grid_size = grid_size)
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
@@ -297,6 +298,9 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         }, save_dir / self.save_file_name)
     
     def load_checkpoint(self, save_dir, exclude_keys = [], enable_determinism = True):
+        # If (a) agent.play_and_train() has already been called at least once and (b) this
+        # gets called right before the beginning of an agent.play_and_train(), it should
+        # hopefully restore things exactly to how they were
         if enable_determinism: torch.use_deterministic_algorithms(True, warn_only=True)
         save_dir = Path(save_dir)
         save_file = save_dir / self.save_file_name
