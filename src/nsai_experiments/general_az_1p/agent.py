@@ -6,6 +6,8 @@ from multiprocessing import Pool
 import logging
 import itertools
 import os
+from pathlib import Path
+import pickle
 
 import numpy as np
 
@@ -23,11 +25,12 @@ class Agent():
     # Constants
     RNG_NAMES = ["mcts", "train", "eval", "external_policy"]  # Names for the random number generators to construct
     POLICY_RESERVED_NAMES = set(["old_net", "new_net", "old_net_no_mcts", "new_net_no_mcts"])
+    save_file_name = "agent_checkpoint.pkl"
 
     # State
     game: Game
     net: PolicyValueNet
-    all_training_examples: list[list[tuple[Any, tuple[Any, float]]]] = []  # Accumulated training examples (state, (policy, reward))
+    all_training_examples: list[list[tuple[Any, tuple[Any, float]]]]  # Accumulated training examples (state, (policy, reward))
     rngs: dict[str, np.random.Generator]
 
     # Config
@@ -69,6 +72,7 @@ class Agent():
             if not all([os.environ.get(thread_var, None) == "1" for thread_var in THREAD_VARS]):
                 warnings.warn(f"You have elected to use multiprocessing, but NumPy multithreading is not disabled. This may lead to thread oversubscription. You can disable NumPy multithreading by setting the environment variables {','.join(THREAD_VARS)} to 1 before importing NumPy, or disable multiprocessing by passing n_procs=-1 to the Agent constructor.")
         self._construct_rngs(random_seeds if random_seeds is not None else {})
+        self.all_training_examples = []
 
         if self.external_policy is not None:
             print("Will use external policy rather than NN+MCTS for move selection")
@@ -209,10 +213,10 @@ class Agent():
         new_train_examples = []  # PERF consider using a deque for efficiency
 
         start_time = time.time()
-        multiprocessing_stash = self.net.push_multiprocessing()
+        multiprocessing_stash = self.push_multiprocessing()
         arg_tuples = [(i, self._randseed("train"), self._randseed("mcts")) for i in range(self.n_games_per_train)]
         train_example_sets = self._starmap(self._play_for_examples, arg_tuples)
-        self.net.pop_multiprocessing(multiprocessing_stash)
+        self.pop_multiprocessing(multiprocessing_stash)
         for train_examples in train_example_sets:
             new_train_examples.extend(train_examples)
         elapsed = time.time() - start_time
@@ -223,6 +227,7 @@ class Agent():
             self.all_training_examples.pop(0)
         print(f"Training examples lengths: {[len(x) for x in self.all_training_examples]}")
         flat_examples = list(itertools.chain.from_iterable(self.all_training_examples))
+        print(f"Total value: {sum(x[1][1] for x in flat_examples):.2f}")
 
         # Save an old Agent to pit ourselves against, then train the network
         self.game.reset_wrapper()
@@ -255,14 +260,14 @@ class Agent():
         "Play a bunch of games to evaluate new vs. old networks"
         
         start_time = time.time()
-        my_multiprocessing_stash = self.net.push_multiprocessing()
-        before_multiprocessing_stash = self_before_training.net.push_multiprocessing()
+        my_multiprocessing_stash = self.push_multiprocessing()
+        before_multiprocessing_stash = self_before_training.push_multiprocessing()
         # print("pred on old", self_before_training.game.obs, self_before_training.net.predict(self_before_training.game.obs))
         # print("pred on new", self.game.obs, self.net.predict(self.game.obs))
         arg_tuples = [(i, self._randseed("eval"), self._randseed("mcts"), self_before_training, PIT_NO_MCTS, True) for i in range(self.n_games_per_eval)]
         eval_results = self._starmap(self._play_for_eval, arg_tuples)
-        self_before_training.net.pop_multiprocessing(before_multiprocessing_stash)
-        self.net.pop_multiprocessing(my_multiprocessing_stash)
+        self_before_training.pop_multiprocessing(before_multiprocessing_stash)
+        self.pop_multiprocessing(my_multiprocessing_stash)
         elapsed = time.time() - start_time
         print(f"..evaluation done in {elapsed:.2f} seconds")
 
@@ -299,3 +304,46 @@ class Agent():
         for i in range(n_trains):
             print(f"\nTraining iteration {i+1} of {n_trains}: will play {self.n_games_per_train} games, train, and evaluate on {self.n_games_per_eval} games")
             self.play_and_train()
+
+    def push_multiprocessing(self):
+        my_info = self.all_training_examples
+        self.all_training_examples = None
+
+        net_info = self.net.push_multiprocessing()
+        return (my_info, net_info)
+    
+    def pop_multiprocessing(self, stash):
+        my_info, net_info = stash
+        self.all_training_examples = my_info
+        self.net.pop_multiprocessing(net_info)
+
+    def save_checkpoint(self, save_dir):
+        "Save all state but the network, which you must handle separately. Does not save config."
+
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        with (save_dir / self.save_file_name).open("wb") as file:
+            pickle.dump({
+                "game": self.game,
+                "all_training_examples": self.all_training_examples,
+                "rngs": self.rngs
+            }, file)
+
+    def load_checkpoint(self, save_dir, exclude_keys = []):
+        "Load all state but the network, which you must handle separately. Does not load config."
+
+        save_dir = Path(save_dir)
+        save_file = save_dir / self.save_file_name
+        if not save_file.exists():
+            raise FileNotFoundError(f"Checkpoint file {save_file} does not exist.")
+        with open(save_file, "rb") as file:
+            checkpoint = pickle.load(file)
+        if "rngs" not in exclude_keys: self.rngs = checkpoint["rngs"]
+        if "game" not in exclude_keys: self.game = checkpoint["game"]
+        if "all_training_examples" not in exclude_keys:
+            # TODO extremely weird behavior: reassigning this destroys multiprocessing
+            # performance (no matter whether directly, with deepcopy, with list
+            # comprehensions, etc.), but clearing it and extending it works fine. Figure out why...
+            self.all_training_examples.clear()
+            self.all_training_examples.extend(checkpoint["all_training_examples"])
