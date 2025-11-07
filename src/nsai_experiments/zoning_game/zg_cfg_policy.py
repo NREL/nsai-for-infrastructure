@@ -78,7 +78,7 @@ def _evaluate_policies_for_seed(policy_seed, ruleset, fallback_policy_creator, c
 
     return local_ruleset_score, local_control_score, local_ruleset_infos, local_control_infos
 
-def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy, control_policy_creator=None, policy_seeds = range(0, 10), env_seeds = range(10, 20), on_invalid = None, skip_control = False):
+def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy, control_policy_creator=None, policy_seeds = range(0, 10), env_seeds = range(10, 20), on_invalid = None, skip_control = False, env_kwargs = {}):
     """
     Run a bunch of games with the given `ruleset` and `fallback_policy_creator`, and also
     run those same games with just the `control_policy_creator` (same as
@@ -88,7 +88,7 @@ def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy
     
     if control_policy_creator is None: control_policy_creator = fallback_policy_creator
     if skip_control: control_policy_creator = None
-    env = ZoningGameEnv()
+    env = ZoningGameEnv(**env_kwargs)
 
     ruleset_score = 0
     control_score = 0
