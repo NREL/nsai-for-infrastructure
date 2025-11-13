@@ -5,6 +5,7 @@ import logging
 from .zg_gym import ZoningGameEnv
 from .zg_cfg import interpret_valid_moves, _parse_if_necessary
 from .zg_policy import get_legal_moves, create_policy_indiv_greedy, play_one_game
+from collections.abc import Iterable
 
 def create_policy_cfg_with_fallback(ruleset, fallback_policy_creator, rng = None, seed=None, legal_moves_decider=get_legal_moves):
     """
@@ -35,12 +36,6 @@ def create_policy_cfg_with_fallback(ruleset, fallback_policy_creator, rng = None
         return fallback_policy(obs)
     
     return policy_cfg
-
-def create_policy_cfg_indiv_greedy(ruleset, rng = None, seed=None, legal_moves_decider=get_legal_moves):
-    """
-    `create_policy_cfg_with_fallback` with `fallback_policy_creator=create_policy_indiv_greedy`
-    """
-    return create_policy_cfg_with_fallback(ruleset, create_policy_indiv_greedy, rng=rng, seed=seed, legal_moves_decider=legal_moves_decider)
 
 def _compute_info_summary(infos):
     return {
@@ -94,13 +89,18 @@ def evaluate_ruleset(ruleset, fallback_policy_creator=create_policy_indiv_greedy
     control_score = 0
     ruleset_infos = []
     control_infos = []
+    env_seeds_is_2d = isinstance(env_seeds[0], Iterable)
+    if env_seeds_is_2d:
+        if not len(env_seeds) == len(policy_seeds):
+            raise ValueError("If env_seeds is 2D, its length must match that of policy_seeds")
 
     with Pool() as pool:
         results = pool.starmap(
             _evaluate_policies_for_seed,
-            [(policy_seed, ruleset, fallback_policy_creator, control_policy_creator, env_seeds, env, on_invalid)
-             for policy_seed in policy_seeds]
+            [(policy_seed, ruleset, fallback_policy_creator, control_policy_creator, env_seeds[i] if env_seeds_is_2d else env_seeds, env, on_invalid)
+             for (i, policy_seed) in enumerate(policy_seeds)]
         )
+
     
     for local_ruleset_score, local_control_score, local_ruleset_infos, local_control_infos in results:
         ruleset_score += local_ruleset_score
