@@ -5,22 +5,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import gymnasium as gym
 
 from nsai_experiments.general_az_1p.game import EnvGame
 from nsai_experiments.general_az_1p.policy_value_net import TorchPolicyValueNet
+from nsai_experiments.general_az_1p.utils import ScaleRewardWrapper
 
 from nsai_experiments.zoning_game.zg_gym import ZoningGameEnv, flatten_zg_obs
 from nsai_experiments.zoning_game.zg_gym import Tile
-
-# multiprocessing doesn't like anonymous functions so we can't use TransformReward(... lambda...)
-class ScaleRewardWrapper(gym.RewardWrapper):
-    def __init__(self, env, scale):
-        super().__init__(env)
-        self.scale = scale
-
-    def reward(self, reward):
-        return reward * self.scale
 
 class ZoningGameGame(EnvGame):
     default_env_kwargs = {
