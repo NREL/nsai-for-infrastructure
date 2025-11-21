@@ -14,7 +14,7 @@ import numpy as np
 from .game import Game
 from .policy_value_net import PolicyValueNet
 from .mcts import MCTS, entab
-from .utils import THREAD_VARS
+from .setup_utils import THREAD_VARS
 
 # Debugging flags:
 DETAILED_DEBUG = False
