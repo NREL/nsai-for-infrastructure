@@ -1,4 +1,5 @@
 import copy
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -117,7 +118,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
     default_training_params = {
         "epochs": 10,
         "batch_size": 2048,
-        "learning_rate": 0.001,
+        "learning_rate": 0.0003,
         "l1_lambda": 0,
         "weight_decay": 1e-5,
         "value_weight": 50.0,
@@ -127,16 +128,22 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
 
     def __init__(self, grid_size = 6, random_seed = None, training_params = {}, device = None):
         if random_seed is not None:
-            torch.manual_seed(random_seed)
             torch.use_deterministic_algorithms(True, warn_only=True)
+        self.rng = np.random.default_rng(random_seed)
+        self._reset_torch_rng()
         model = ZoningGameModel(grid_size = grid_size)
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
+        print("Neural network training params are", self.training_params)
         self.grid_size = grid_size
 
         self.DEVICE = (torch.accelerator.current_accelerator().type if torch.accelerator.is_available() else "cpu") if device is None else device
         print(f"Neural network training will occur on device '{self.DEVICE}'")
         self.optimizer = None
+    
+    def _reset_torch_rng(self):
+        seed = int(self.rng.integers(2**31-1))
+        torch.manual_seed(seed)
 
     def _reshape_data(self, examples):
         # The usual case is that `examples` comes from AlphaZero and is a list of tuples
@@ -150,6 +157,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         return dataset
     
     def train(self, examples, val_dataset = None, needs_reshape=True, print_all_epochs=False):
+        self._reset_torch_rng()
         model = self.model
         model.to(self.DEVICE)
         tp = self.training_params
@@ -267,6 +275,7 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
         return policy_prob.numpy().squeeze(), value.numpy().squeeze()
     
     def push_multiprocessing(self):
+        self._reset_torch_rng()
         super().push_multiprocessing()
         optimizer = self.optimizer  # the optimizer can't be sent to CPU, so we'll stash it in caller state so we don't try to copy it
         self.optimizer = None
@@ -275,3 +284,39 @@ class ZoningGamePolicyValueNet(TorchPolicyValueNet):
     def pop_multiprocessing(self, optimizer):
         super().pop_multiprocessing(optimizer)
         self.optimizer = optimizer
+
+    def save_checkpoint(self, save_dir):
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "model_state_dict": self.model.state_dict(),
+            "training_params": self.training_params,
+            "grid_size": self.grid_size,
+            "rng": self.rng,
+            "DEVICE": self.DEVICE,
+            "optimizer_state_dict": self.optimizer.state_dict() if self.optimizer is not None else None
+        }, save_dir / self.save_file_name)
+    
+    def load_checkpoint(self, save_dir, exclude_keys = [], enable_determinism = True):
+        # If (a) agent.play_and_train() has already been called at least once and (b) this
+        # gets called right before the beginning of an agent.play_and_train(), it should
+        # hopefully restore things exactly to how they were
+        if enable_determinism: torch.use_deterministic_algorithms(True, warn_only=True)
+        save_dir = Path(save_dir)
+        save_file = save_dir / self.save_file_name
+        if not save_file.exists():
+            raise FileNotFoundError(f"Checkpoint file {save_file} does not exist.")
+        checkpoint = torch.load(save_file, weights_only=False)
+
+        if "rng" not in exclude_keys:
+            self.rng = checkpoint["rng"]
+        if "DEVICE" not in exclude_keys: self.DEVICE = checkpoint["DEVICE"]
+        if "training_params" not in exclude_keys: self.training_params = checkpoint["training_params"]
+        if "grid_size" not in exclude_keys: self.grid_size = checkpoint["grid_size"]
+        if "model_state_dict" not in exclude_keys:
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.model.to(self.DEVICE)
+        if "optimizer_state_dict" not in exclude_keys and checkpoint["optimizer_state_dict"] is not None:
+            tp = self.training_params
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=tp["learning_rate"], weight_decay=tp["weight_decay"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
