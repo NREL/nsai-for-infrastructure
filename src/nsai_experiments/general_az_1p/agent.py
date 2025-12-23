@@ -15,7 +15,7 @@ import numpy as np
 from .game import Game
 from .policy_value_net import PolicyValueNet
 from .mcts import MCTS, entab
-from .utils import THREAD_VARS
+from .setup_utils import THREAD_VARS
 
 # Debugging flags:
 DETAILED_DEBUG = False
@@ -116,18 +116,25 @@ class Agent():
         rng = np.random.default_rng(random_seed)
         for i in range(max_moves):
             if msg: print(msg, f"starting move {i}")
-
             if self.external_policy is None:
                 move_probs = mcts.perform_simulations(entab(msg, f", m{i+1}"))
                 self.game = mcts.game  # TODO HACK because MCTS modifies the game state in place
                 train_examples.append((deepcopy(self.game.obs), (move_probs, None)))  # PERF deepcopy often unnecessary
-                selected_move = rng.choice(len(move_probs), p=move_probs)
+                
+                # Sample from probabilities (flatten for choice, then convert to tuple)
+                flat_probs = move_probs.flatten()
+                flat_idx = rng.choice(len(flat_probs), p=flat_probs)
+                selected_move = np.unravel_index(flat_idx, move_probs.shape)
+                
                 if msg: print(msg, "obs", self.game.obs, "hobs", self.game.hashable_obs, "move_probs", move_probs, "selmove", selected_move)
                 # print(f"Taking move {selected_move} with probability {move_probs[selected_move]:.2f}")  # TODO logging
             else:
                 selected_move = self.external_policy(self.game.obs)
                 if msg: print(msg, "external policy selmove", selected_move)
             self.game.step_wrapper(selected_move)
+            # Temporary, for ZLAZ debugging:
+            # print(self.game.info["last_prod"])
+            # print(self.game.env.unwrapped.stringify_program())
             rewards.append(self.game.reward)
             if self.game.terminated or self.game.truncated:
                 break

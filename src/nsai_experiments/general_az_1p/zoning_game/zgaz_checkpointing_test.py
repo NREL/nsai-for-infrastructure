@@ -1,4 +1,4 @@
-from nsai_experiments.general_az_1p.utils import disable_numpy_multithreading, use_deterministic_cuda
+from nsai_experiments.general_az_1p.setup_utils import disable_numpy_multithreading, use_deterministic_cuda
 disable_numpy_multithreading()
 use_deterministic_cuda()
 
