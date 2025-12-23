@@ -7,11 +7,6 @@ than an actual bug.
 
 from contextlib import redirect_stdout
 from io import StringIO
-
-from nsai_experiments.general_az_1p.utils import disable_numpy_multithreading, use_deterministic_cuda
-disable_numpy_multithreading()
-use_deterministic_cuda()
-
 import re
 
 import pytest
