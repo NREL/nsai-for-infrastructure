@@ -1,6 +1,8 @@
-Small portions of this repository were taken from the "alphazero_singleplayer"
-repository by Thomas Moerland at
-<https://github.com/tmoer/alphazero_singleplayer>. Those portions are used under
+Small portions of this repository, including some files in the
+`src/nsai_experiments/deps` and `src/nsai_experiments/new_games_old_engine`
+directories and the file `src/nsai_experiments/alphazero_torch.py`, were taken
+from the "alphazero_singleplayer" repository by Thomas Moerland at
+<https://github.com/tmoer/alphazero_singleplayer>. These portions are used under
 the terms of the MIT License, which is reproduced below.
 --
 
