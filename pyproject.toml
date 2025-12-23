@@ -13,7 +13,7 @@ dependencies = [
     "matplotlib",
     "ipykernel",
     "nltk",
-    "torch == 2.2",
+    "torch >= 2.2",  # prefer >=2.6 if possible
     "torchsummary",
     "scipy",
     "scikit-learn",
