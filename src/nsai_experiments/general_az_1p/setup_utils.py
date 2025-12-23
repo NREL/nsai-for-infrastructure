@@ -1,4 +1,4 @@
-"Utils that may need to be called before importing NumPy or"
+"Utils that may need to be called before importing NumPy or PyTorch"
 
 import os
 
