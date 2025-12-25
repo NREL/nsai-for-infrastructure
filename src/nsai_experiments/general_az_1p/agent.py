@@ -85,7 +85,7 @@ class Agent():
         for rng_name in self.RNG_NAMES:
             seed = random_seeds.get(rng_name, None)
             self.rngs[rng_name] = np.random.default_rng(seed)
-        if all(rng_name in random_seeds for rng_name in self.RNG_NAMES):
+        if all(rng_name in random_seeds or (rng_name == "external_policy" and self.external_policy is None) for rng_name in self.RNG_NAMES):
             print(f"RNG seeds are fully specified")
         else:
             print(f"RNG seeds are not fully specified, using nondeterministic seeds for: {', '.join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds)}")
@@ -125,6 +125,9 @@ class Agent():
                 flat_probs = move_probs.flatten()
                 flat_idx = rng.choice(len(flat_probs), p=flat_probs)
                 selected_move = np.unravel_index(flat_idx, move_probs.shape)
+                # Distinguish scalar actions from 1-tuple actions
+                if len(self.game.action_space.shape) == 0: selected_move, = selected_move
+                assert selected_move in self.game.action_space
                 
                 if msg: print(msg, "obs", self.game.obs, "hobs", self.game.hashable_obs, "move_probs", move_probs, "selmove", selected_move)
                 # print(f"Taking move {selected_move} with probability {move_probs[selected_move]:.2f}")  # TODO logging
@@ -158,8 +161,7 @@ class Agent():
         # print(i)
         logging.getLogger().setLevel(logging.WARN)
         self.game.reset_wrapper(seed=reset_seed)
-#        return self.play_single_game(random_seed=mcts_seed, msg="play4egs g{}".format(i))
-        return self.play_single_game(random_seed=mcts_seed)
+        return self.play_single_game(random_seed=mcts_seed, msg = f"game {i}" if DETAILED_DEBUG else "")
 
     def _play_for_eval(self, i, reset_seed, mcts_seed, external_policy_seed, self_before_training, try_without_mcts = False, pit_external_policy_creators_to_pit = False):
         if DETAILED_DEBUG: print(i)
