@@ -23,21 +23,20 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torchsummary import summary
 
-from transformer_encoder import EncoderOnlyTransformer
-
 import argparse
 import os
 import time
 import copy
-from gym import wrappers
+from gymnasium import wrappers, spaces
 import matplotlib.pyplot as plt
 plt.style.use('ggplot')
 
-from helpers import (argmax,check_space, store_safely,stable_normalizer,Database)
-from netgame import make_netgame
-from netgrammargame import make_grammarnetgame
-from srgame import make_grammarsrgame, make_grammaronesgame
-from grammargame import GrammarEnv
+from .transformer_encoder import EncoderOnlyTransformer
+from .helpers import (argmax,check_space, store_safely,stable_normalizer,Database)
+from .netgame import make_netgame
+from .netgrammargame import make_grammarnetgame
+from .srgame import make_grammarsrgame, make_grammaronesgame
+from .grammargame import GrammarEnv
 
 """
 For the basic bitflipping game we need a grammar for its rules.  Can imagine the env comes with a grammar, so the
@@ -48,7 +47,7 @@ But starting from rules for bitflip, we can back out a grammar to play with:
 for i in range(len(state)):
     if state[i] == 0, then set_state[i]=1
 
-for_all i \in [0,len(state)], state(i,0) => set_state(i,1)
+for_all i \\in [0,len(state)], state(i,0) => set_state(i,1)
 
 need predicates/actions;
 pick-bit,  check-bit, set-bit, flip-bit, next-bit, start-bit, ...
@@ -357,7 +356,7 @@ class State():
     def evaluate(self):
         ''' Bootstrap the state value '''
 #        print(self.index)
-        self.V = np.squeeze(self.model.predict_V(self.index[None,])) if not self.terminal else torch.Tensor([0.0])          
+        self.V = np.squeeze(self.model.predict_V(self.index[None,])) if not self.terminal else torch.Tensor(np.array(0.0))          
 
     def update(self):
         ''' update count on backward pass '''
@@ -625,7 +624,7 @@ def agent(args):
 
     D = Database(max_size=data_size,batch_size=batch_size)        
     t_total = 0 # total steps   
-    R_best = -np.Inf
+    R_best = -np.inf
  
     for ep in range(n_ep):    
         start = time.time()
@@ -760,7 +759,7 @@ def agent(args):
 
 #### Command line call, parsing and plotting ##
     
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser()
 #    parser.add_argument('--game', default='CartPole-v0',help='Training environment')
     # parser.add_argument('--game', default='net',help='Training environment')
@@ -825,6 +824,9 @@ if __name__ == '__main__':
 #         i = 0
 #         while not done:
 #             a = a_best[i]
-#             _,_,done,_ = Env.step(a)
+#             _,_,done,_,_ = Env.step(a)
 #             Env.render()
 #             i += 1
+
+if __name__ == '__main__':
+    main()

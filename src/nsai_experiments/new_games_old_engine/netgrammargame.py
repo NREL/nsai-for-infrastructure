@@ -1,14 +1,14 @@
-import gym
-from gym import error, spaces, utils
-from gym.utils import seeding
+import gymnasium as gym
+from gymnasium import error, spaces, utils
+from gymnasium.utils import seeding
 import numpy as np
 import random
 
 from nltk.parse.recursivedescent import RecursiveDescentParser
 from nltk.tokenize import wordpunct_tokenize
 
-from grammargame import GrammarAgent, GrammarEnv
-from netgame import NetGameEnv
+from .grammargame import GrammarAgent, GrammarEnv
+from .netgame import NetGameEnv
 
 class NetGrammarAgent(GrammarAgent):
     def apply_rules(self, rules):
@@ -48,8 +48,8 @@ class GrammarNetEnv(gym.Env):
         self.agent = NetGrammarAgent(self.game_env, self.grammar_env)
 
     def step(self, action):
-        state, reward, done, rule = self.grammar_env.decode_and_step(action)
-        if done:
+        state, reward, done, trunc, rule = self.grammar_env.decode_and_step(action)
+        if done or trunc:
             parser = RecursiveDescentParser(self.grammar_env.grammar)
             parsed,  = parser.parse(wordpunct_tokenize(rule['rule']))
             # very much grammar specific code:
@@ -71,7 +71,7 @@ class GrammarNetEnv(gym.Env):
                 reward += subreward
 #            print ("RULE CREATED  ", rule['rule'], "   ", reward)
 
-        return state, reward, done, done, rule
+        return state, reward, done, trunc, rule
 
     def get_action_mask(self, state = None):
         return self.grammar_env.get_action_mask(state)
@@ -86,15 +86,26 @@ def make_grammarnetgame(nsites = 10):
     env = GrammarNetEnv(nsites)
     return env
 
-if __name__=="__main__":
+def main():
     # random testing of stuff
+    grammarstr =  """
+    S -> S1 | S2 
+    S1 ->  C A  
+    S2 ->  C A C A  
+    C -> 'bit0' | 'bit1' 
+    A -> 'set0' | 'set1' 
+    # C -> 'bit0' | 'bit1' | 'bit2' | 'bit3'
+    # A -> 'set0' | 'set1' | 'set3' | 'set4' 
+    """
     env = NetGameEnv(nsites=10)
-    grammar_env = GrammarEnv()
+    grammar_env = GrammarEnv(grammarstr)
     agent = GrammarAgent(env, grammar_env)
     done = False
     while not done:
 #        act = agent.random_action()
         act = agent.truly_random_action()
-#        obs, rew, done, info = grammar_env.step(act)
+#        obs, rew, done, trunc, info = grammar_env.step(act)
         obs, rew, done, trunc, info = grammar_env.step_with_mask(act)
 
+if __name__=="__main__":
+    main()

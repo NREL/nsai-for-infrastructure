@@ -42,7 +42,7 @@ class NetGameEnv(gym.Env):
         Returns:
             output: (array, float, bool, dict)
                     information provided by the environment about its current state:
-                    (observation, reward, done, info)
+                    (observation, reward, done, trunc, info)
         """
 #        print ("prestep state <a, s, s(a)>", action, self.state, self.state[action])
         self.step_count += 1
