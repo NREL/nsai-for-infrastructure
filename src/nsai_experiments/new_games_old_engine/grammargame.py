@@ -1,7 +1,8 @@
 # grammar game stuff
 
-import gym, random
-from gym import error, spaces, utils
+import gymnasium as gym
+import random
+from gymnasium import error, spaces, utils
 import numpy as np
 
 from nltk import CFG, Production, nonterminals, Nonterminal
@@ -180,7 +181,7 @@ class GrammarEnv(gym.Env):
         # if rule is not None:
         #     print ("STEP", rule)
         # print ("STEP", action, self.state, self.decode_state(self.state), done)   
-        return self.state, r, done, {'rule':rule}
+        return self.state, r, done, False, {'rule':rule}
     
     def step_with_mask(self, action):
         mask = self.get_action_mask()
@@ -189,14 +190,14 @@ class GrammarEnv(gym.Env):
             return self.step(action)
         else:
             print ("INVALID", action, self.state)
-            return self.state, 0, False, {}
+            return self.state, 0, False, False, {}
         
     def decode_and_step(self, action):
         # action is index into flattened (n-bits x n-productions) array
         a = [action // self.action_space.nvec[1], action % self.action_space.nvec[1]]
         return self.step_with_mask(a)
 
-    def reset(self):
+    def reset(self, seed = None):
         self.state = [self.pad_tok for _ in range(self.observation_space.shape[0])]
         self.state[0] = self.symdict['S']
         self.state = np.array(self.state)

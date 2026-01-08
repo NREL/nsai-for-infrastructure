@@ -20,7 +20,10 @@ dependencies = [
     "gymnasium",
     "gymnasium[classic-control]",
     "tensorflow",
-    "svgling"
+    "svgling",
+    "sympy",
+    "lmfit",
+    "tqdm",
 ]
 
 [project.optional-dependencies]

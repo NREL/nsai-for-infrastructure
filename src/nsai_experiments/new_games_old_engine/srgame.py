@@ -1,8 +1,8 @@
 # symbolic regression with AlphaGrammar
 
-import gym
-from gym import error, spaces, utils
-from gym.utils import seeding
+import gymnasium as gym
+from gymnasium import error, spaces, utils
+from gymnasium.utils import seeding
 import numpy as np
 import random
 from copy import deepcopy
@@ -12,16 +12,12 @@ import matplotlib.pyplot as plt
 from nltk.parse.recursivedescent import RecursiveDescentParser
 from nltk.tokenize import wordpunct_tokenize
 
-# being a bit lazy/uncommitted r.e. making a "package", so for now...
-# to run just this file:
-#from grammargame import GrammarAgent, GrammarEnv
-# to run from out directory:
-from grammargame import GrammarAgent, GrammarEnv
-
 from scipy.optimize import least_squares
 from sympy.parsing import sympy_parser
 import sympy
 import lmfit
+
+from .grammargame import GrammarAgent, GrammarEnv
 
 
 operators = ['/', '*', '+', '-', '**']
@@ -129,7 +125,7 @@ class SRGameEnv():
     #         done = False
     #         while not done:
     #             act = agent.random_valid_action()
-    #             obs, rew, done, info = env.step_with_mask(act)
+    #             obs, rew, done, trunc, info = env.step_with_mask(act)
     #         fn_form = info['rule']
             self.sympy_model, self.param_values, self.ind_vars = self.prefix_str_to_py_fn(fn_form)
             for term in self.param_values.keys():
@@ -196,8 +192,8 @@ class GrammarSREnv(gym.Env):
     #     return reward
 
     def step(self, action):
-        state, reward, done, info = self.grammar_env.decode_and_step(action)
-        if done:
+        state, reward, done, trunc, info = self.grammar_env.decode_and_step(action)
+        if done or trunc:
             # very much grammar specific code:
             # complete rule has been built; 
             # evaluate here how well it does at SR task(s).
@@ -205,7 +201,7 @@ class GrammarSREnv(gym.Env):
  #           rule = prefixStringToInfix(info['rule'])
  #           print ("RULE CREATED  ", rule, "            ", reward)
 
-        return state, reward, done, done, info
+        return state, reward, done, trunc, info
 
     def get_action_mask(self, state = None):
         return self.grammar_env.get_action_mask(state)
@@ -228,12 +224,12 @@ class GrammarOnesEnv(gym.Env):
         self.action_space = self.grammar_env.action_space
 
     def step(self, action):
-        state, reward, done, info = self.grammar_env.decode_and_step(action)
+        state, reward, done, trunc, info = self.grammar_env.decode_and_step(action)
         if done:
             fn_form = info['rule'].strip().split(" ")
             reward += fn_form.count("1")
  #           print ("RULE CREATED  ", fn_form, "            ", reward)
-        return state, reward, done, info
+        return state, reward, done, trunc, info
     
     def get_optimal_policy(self, state):
         # return discrete pdf pi corr
@@ -275,12 +271,12 @@ def make_grammaronesgame():
     env = GrammarOnesEnv()
     return env
 
-if __name__=="__main__":
+def main():
+    grammar_env = make_grammarsrgame()
     # random testing of stuff
-    srenv = SRGameEnv()
+    srenv = SRGameEnv(grammar_env)
     srenv.fit("+ C1 * C2 * x x", plot=False)
 
-    grammar_env = make_grammarsrgame()
 
     # parser = RecursiveDescentParser(grammar_env.grammar_env.grammar)
     # #parser.trace(2)
@@ -301,12 +297,12 @@ if __name__=="__main__":
                 act = [grammar_env.grammar_env.real_state_len - 1,0]
             else:
                 act = agent.random_valid_action()
-    #        obs, rew, done, info = grammar_env.step(act)
-            obs, rew, done, info = grammar_env.grammar_env.step_with_mask(act)
+    #        obs, rew, done, trunc, info = grammar_env.step(act)
+            obs, rew, done, trunc, info = grammar_env.grammar_env.step_with_mask(act)
             its += 1
         res = srenv.fit_core(info['rule'], plot=False)
         print ("RULE", info['rule'], "\n        rsquared",  res.rsquared)
         print ("        ", res.params)
 
-
-
+if __name__=="__main__":
+    main()
