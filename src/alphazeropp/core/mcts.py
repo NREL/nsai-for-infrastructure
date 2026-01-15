@@ -181,7 +181,7 @@ class MCTS():
         
         return all_ucbs
 
-    def update_edge(self, mynode: MCTSTreeNode, action: int, reward: float):
+    def update_edge(self, mynode: MCTSTreeNode, action: tuple, reward: float):
         if action not in mynode.action_N:
             assert action not in mynode.action_Q
             mynode.action_N[action] = 0  # could use a collections.Counter for this
