@@ -82,7 +82,10 @@ class Agent:
         assert len(move_probs.shape) == 1, "move_probs should be a flat array"
         return move_probs, state
         
-    def play_single_game(self, game: Game, max_moves: int = 10_000, random_seed: int | None = None, msg = ""):
+    def play_one_round(self, game: Game, max_moves: int = 10_000, random_seed: int | None = None, msg = ""):
+        """
+        The function plays for one round from the given game state using the agent's policy.
+        """
         original_game_state = game.stash_state()
         current_game_state = game.stash_state()
         rng = np.random.default_rng(random_seed)
@@ -98,8 +101,16 @@ class Agent:
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
             
-            _, reward, _, _, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
+            _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
+            collected_experience.append((game.obs, action_idx, reward))
+            if terminated or truncated:
+                break
             
-            
-            
+        return collected_experience, original_game_state
+    
+    def play_for_experience(self, id, game: Game, reset_seed:int, interaction_seed):
+        current_game = game.stash_state() # we make sure that it doesn't interfere with the original game state.
+        current_game.reset_wrapper(reset_seed)
+        
+        return self.play_one_round(current_game, random_seed=interaction_seed, msg=f"[Agent {id}]")
