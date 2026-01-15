@@ -41,11 +41,10 @@ class MCTS():
     temperature: float  # Temperature for exponentiated visit counts in the final answer
     c_exploration: float  # Exploration constant for UCB
 
-    def __init__(self, game: Game, net: PolicyValueNet,
+    def __init__(self, net: PolicyValueNet,
                  n_simulations: int = 25,
                  temperature: float = 1.0,
                  c_exploration: float = 1.0):
-        self.game = game
         self.net = net
         self.nodes = {}
 
@@ -53,25 +52,25 @@ class MCTS():
         self.temperature = temperature
         self.c_exploration = c_exploration
 
-    def perform_simulations(self, msg):
+    def perform_simulations(self, state: Game, msg=None):
         """
         Perform `n_simulations` simulations from the current game state, then return move
         probabilities from exponentiated visit counts. Special case: if `n_simulations` is
         negative, directly query the policy network rather than performing any simulations
         (results are still exponentiated).
         """
-        mystate = self.game.hashable_obs
-        if msg: print(msg, "at start of perform_simulations, obs is", self.game.obs)
+        mystate = state.hashable_obs
+        if msg: print(msg, "at start of perform_simulations, obs is", state.obs)
 
         if self.n_simulations < 0:
             if msg: print(msg, "n_simulations < 0, directly querying policy net")
             counts, _, _ = self.query_net_masked(msg)
         else:
             for i in range(self.n_simulations):
-                old_game_state = self.game.stash_state()
+                old_game_state = state.stash_state()
                 self.search(entab(msg,  f", simulation {i+1}/{self.n_simulations}"))
-                self.game = self.game.unstash_state(old_game_state)
-                assert mystate == self.game.hashable_obs
+                state = state.unstash_state(old_game_state)
+                assert mystate == state.hashable_obs
             
             mynode = self.nodes[mystate]
             
