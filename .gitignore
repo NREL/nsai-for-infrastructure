@@ -1,6 +1,119 @@
-.venv*
-*.egg-info
-*.pyc
+######################################
+# OS / Editor
+######################################
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+
+######################################
+# Python
+######################################
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+######################################
+# Build / Distribution
+######################################
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
+
+######################################
+# Jupyter
+######################################
+.ipynb_checkpoints
+*.nbconvert.ipynb
+
+######################################
+# PyTorch / ML Artifacts
+######################################
 *.pt
-zgaz_checkpoints
-zgaz_test_checkpoint*
+*.pth
+*.ckpt
+*.onnx
+*.h5
+*.npz
+
+######################################
+# Logs / Outputs
+######################################
+logs/
+log/
+wandb/
+mlruns/
+tensorboard/
+tb/
+runs/
+outputs/
+results/
+
+######################################
+# Hydra / OmegaConf
+######################################
+.multirun/
+hydra_outputs/
+hydra_logs/
+
+######################################
+# Slurm
+######################################
+slurm-*.out
+slurm-*.err
+
+######################################
+# Caches
+######################################
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+######################################
+# Data (usually too large for git)
+######################################
+data/
+datasets/
+*.csv
+*.tsv
+*.parquet
+
+######################################
+# Experiments / Checkpoints
+######################################
+checkpoints/
+models/
+experiments/
+
+######################################
+# Latex / Papers
+######################################
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+######################################
+# Misc
+######################################
+*.tmp
+*.bak
