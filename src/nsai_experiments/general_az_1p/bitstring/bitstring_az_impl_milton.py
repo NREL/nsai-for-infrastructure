@@ -608,6 +608,9 @@ if __name__ == "__main__":
 
             val = input(f"MCTS Simulations [default: {config['mcts_sims']}]: ").strip()
             if val: config["mcts_sims"] = int(val)
+
+            val = input(f"Training Epochs [default: {config['epochs']}]: ").strip()
+            if val: config["epochs"] = int(val)
         except ValueError as e:
             print(f"Invalid input, using defaults. Error: {e}")
         print("\nConfiguration Complete.\n")
