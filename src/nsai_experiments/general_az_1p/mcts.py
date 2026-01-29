@@ -115,7 +115,9 @@ class MCTS():
         # Base case: in a terminal state, return the direct reward
         if mynode.is_terminal_state:
             if msg: print(msg, "Reached terminal state", self.game.obs, "reward", mynode.direct_reward)
-            return mynode.direct_reward
+            # The reward for entering this state is already captured by the parent node.
+            # The future value of a terminal state is 0.
+            return 0.0
         
         # Base case: at a new node, query the policy-value network
         if mynode.nn_policy is None:
@@ -138,14 +140,24 @@ class MCTS():
         if len(self.game.action_space.shape) == 0: to_step, = to_step
         assert to_step in self.game.action_space
         self.game.step_wrapper(to_step)
+        
+        # Capture the immediate reward from the transition
+        immediate_reward = self.game.reward
 
-        reward = self.search(entab(msg, " recurse"))
+        # Recursively get the value of the next state (V(s'))
+        future_value = self.search(entab(msg, " recurse"))
         # reward = self.search("")
         
-        self.update_edge(mynode, best_action, reward)
+        # Bellman update: Q(s,a) = R(s,a) + gamma * V(s')
+        # Assuming gamma (discount) is 1.0 since it's not strictly passed to MCTS here,
+        # but typically AlphaZero treats it as such or the game handles return calculation.
+        # However, for dense rewards, we MUST add the immediate reward.
+        total_reward = immediate_reward + future_value
+        
+        self.update_edge(mynode, best_action, total_reward)
         mynode.total_N += 1
         
-        return reward
+        return total_reward
 
     def query_net(self, msg):
         "Query the policy-value network and perform some basic validation"
