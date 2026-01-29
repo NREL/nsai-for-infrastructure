@@ -31,7 +31,9 @@ class MCTSTreeNode():
 
         self.total_N = 0
         self.action_Q = {}
+        self.action_Q = {}
         self.action_N = {}
+        self.q_u_history = []  # Log of (q, u) pairs for diagnosis
 
 class MCTS():
     game: Game
@@ -53,6 +55,10 @@ class MCTS():
         self.temperature = temperature
         self.c_exploration = c_exploration
 
+        # min max Q value
+        self.q_min = float('inf')
+        self.q_max = float('-inf')
+
     def perform_simulations(self, msg):
         """
         Perform `n_simulations` simulations from the current game state, then return move
@@ -61,6 +67,10 @@ class MCTS():
         (results are still exponentiated).
         """
         mystate = self.game.hashable_obs
+        # Reset min-max Q stats at start of search over this move
+        self.q_min = float('inf')
+        self.q_max = float('-inf')
+
         if msg: print(msg, "at start of perform_simulations, obs is", self.game.obs)
 
         if self.n_simulations < 0:
@@ -172,11 +182,26 @@ class MCTS():
         all_ucbs = np.full(mynode.nn_policy.shape, -np.inf)
         
         # Calculate UCB for each valid action
+        # Calculate UCB for each valid action
         for action in valid_actions:
             q = mynode.action_Q.get(action, 0.0)
             n = mynode.action_N.get(action, 0)
-            ucb = q + self.c_exploration * mynode.nn_policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
+            
+            # Normalize Q using global min/max seen during search
+            if self.q_min == float('inf') or self.q_max == float('-inf'):
+                q_normalized = 0.0
+            elif self.q_max > self.q_min:
+                q_normalized = (q - self.q_min) / (self.q_max - self.q_min)
+            else:
+                # q_max == q_min
+                q_normalized = 0.5
+            
+            # Use normalized Q for UCB
+            u_val = self.c_exploration * mynode.nn_policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
+            ucb = q_normalized + u_val
             all_ucbs[action] = ucb
+            
+            mynode.q_u_history.append((q, u_val))
             
             if msg:
                 print(msg, "calc_ucb for action", action, "action Q", q, "c_exploration", self.c_exploration, "nn policy", mynode.nn_policy[action], "total N", mynode.total_N, "action N", n)
@@ -192,3 +217,10 @@ class MCTS():
         
         mynode.action_Q[action] = (mynode.action_N[action] * mynode.action_Q[action] + reward) / (1 + mynode.action_N[action])
         mynode.action_N[action] += 1
+
+        # Update global min/max Q
+        new_q = mynode.action_Q[action]
+        if new_q < self.q_min:
+            self.q_min = new_q
+        if new_q > self.q_max:
+            self.q_max = new_q
