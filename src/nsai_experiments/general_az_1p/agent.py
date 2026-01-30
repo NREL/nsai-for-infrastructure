@@ -51,24 +51,27 @@ class Agent():
                  n_games_per_eval: int = 20,
                  n_past_iterations_to_train: int = 20,
                  threshold_to_keep: float = 0.55,
+                 use_gating: bool = True,
                  reward_discount: float = 1.0,
                  mcts_params: dict | None = None,
                  n_procs: int | None = None,
                  random_seeds: dict[str, int] | None = None,
                  external_policy = None,
+
                  external_policy_creators_to_pit = {}):
         self.game = game
         self.n_games_per_train = n_games_per_train
         self.n_games_per_eval = n_games_per_eval
         self.n_past_iterations_to_train = n_past_iterations_to_train
         self.threshold_to_keep = threshold_to_keep
+        self.use_gating = use_gating
         self.net = net
         self.reward_discount = reward_discount
         self.mcts_params = mcts_params if mcts_params is not None else {}
         self.n_procs = n_procs
         self.external_policy = external_policy
         self.run_start_time = int(time.time())
-        print(f"Agent config: {n_games_per_train=}, {n_games_per_eval=}, {n_past_iterations_to_train=}, {threshold_to_keep=}, {reward_discount=}, {mcts_params=}, {n_procs=}, {external_policy=}, {external_policy_creators_to_pit=}")
+        print(f"Agent config: {n_games_per_train=}, {n_games_per_eval=}, {n_past_iterations_to_train=}, {threshold_to_keep=}, {use_gating=}, {reward_discount=}, {mcts_params=}, {n_procs=}, {external_policy=}, {external_policy_creators_to_pit=}")
 
         if self.n_procs is None or self.n_procs >= 0:
             if not all([os.environ.get(thread_var, None) == "1" for thread_var in THREAD_VARS]):
@@ -79,6 +82,16 @@ class Agent():
         if self.external_policy is not None:
             print("Will use external policy rather than NN+MCTS for move selection")
         self._setup_external_policy_creators_to_pit(external_policy_creators_to_pit)
+
+        # Metrics history
+        self.history = {
+            'iteration': [],
+            'reward_mean': [],
+            'reward_std': [],
+            'loss_policy': [],
+            'loss_value': [],
+            'game_length': []
+        }
 
     def _construct_rngs(self, random_seeds: dict[str, int]):
         self.rngs = {}
@@ -109,15 +122,16 @@ class Agent():
         #     for name, policy_creator in external_policy_creators_to_pit.items()
         # }
 
-    def play_single_game(self, max_moves: int = 10_000, random_seed: int | None = None, msg = ""):
+    def play_single_game(self, max_moves: int = 10_000, random_seed: int | None = None, msg = "", add_noise=False):
         train_examples = []
         rewards = []
+        self.cumulative_reward = 0.0
         mcts = MCTS(self.game, self.net, **self.mcts_params)
         rng = np.random.default_rng(random_seed)
         for i in range(max_moves):
             if msg: print(msg, f"starting move {i}")
             if self.external_policy is None:
-                move_probs = mcts.perform_simulations(entab(msg, f", m{i+1}"))
+                move_probs = mcts.perform_simulations(entab(msg, f", m{i+1}"), add_noise=add_noise)
                 self.game = mcts.game  # TODO HACK because MCTS modifies the game state in place
                 train_examples.append((deepcopy(self.game.obs), (move_probs, None)))  # PERF deepcopy often unnecessary
                 
@@ -139,6 +153,7 @@ class Agent():
             # print(self.game.info["last_prod"])
             # print(self.game.env.unwrapped.stringify_program())
             rewards.append(self.game.reward)
+            self.cumulative_reward += self.game.reward
             if self.game.terminated or self.game.truncated:
                 break
         else:
@@ -161,7 +176,9 @@ class Agent():
         # print(i)
         logging.getLogger().setLevel(logging.WARN)
         self.game.reset_wrapper(seed=reset_seed)
-        return self.play_single_game(random_seed=mcts_seed, msg = f"game {i}" if DETAILED_DEBUG else "")
+        logging.getLogger().setLevel(logging.WARN)
+        self.game.reset_wrapper(seed=reset_seed)
+        return self.play_single_game(random_seed=mcts_seed, msg = f"game {i}" if DETAILED_DEBUG else "", add_noise=True)
 
     def _play_for_eval(self, i, reset_seed, mcts_seed, external_policy_seed, self_before_training, try_without_mcts = False, pit_external_policy_creators_to_pit = False):
         if DETAILED_DEBUG: print(i)
@@ -196,8 +213,8 @@ class Agent():
 
         results = {}
         for label, agent in all_agents.items():
-            agent.play_single_game(random_seed=mcts_seed, msg = f"{label} game {i}" if DETAILED_DEBUG else "")
-            results[label] = agent.game.reward
+            agent.play_single_game(random_seed=mcts_seed, msg = f"{label} game {i}" if DETAILED_DEBUG else "", add_noise=False)
+            results[label] = agent.cumulative_reward
 
         if DETAILED_DEBUG: print(f"Reward from old: {results['old_net']:.2f}, Reward from new: {results['new_net']:.2f}")
         if DETAILED_DEBUG and try_without_mcts:
@@ -261,16 +278,59 @@ class Agent():
         # for i, (state, (policy, reward)) in enumerate(flat_examples):
         #     print(f"Example {i+1}/{len(flat_examples)}: state={state}, policy={policy}, reward={reward}")
         start_time = time.time()
-        self.net.train(flat_examples, **({"print_all_epochs": True} if PRINT_ALL_EPOCHS else {}))
+        # Capture training losses (could be a dict or list depending on implementation)
+        _, _, train_losses = self.net.train(flat_examples, **({"print_all_epochs": True} if PRINT_ALL_EPOCHS else {}))
+        
+        # Breakdown losses if available (BitStringPolicyValueNet will return a dict)
+        if isinstance(train_losses, list) and len(train_losses) > 0:
+            # Handle legacy case (list of total losses)
+            if isinstance(train_losses[0], dict):
+                 loss_policy = train_losses[-1].get('policy', 0.0)
+                 loss_value = train_losses[-1].get('value', 0.0)
+            else:
+                 loss_policy = 0.0
+                 loss_value = train_losses[-1] # Fallback
+        else:
+             loss_policy = 0.0
+             loss_value = 0.0
+
         elapsed = time.time() - start_time
         print(f"..training done in {elapsed:.2f} seconds")
 
-        score = self.pit(self_before_training)
-        if score >= self.threshold_to_keep:
-            print("Keeping the new network")
+        # Evaluate & Gating
+        if self.use_gating:
+            eval_stats = self.pit(self_before_training)
+            score = eval_stats['score']
+            
+            if score >= self.threshold_to_keep:
+                print("Keeping the new network")
+            else:
+                print("Reverting to the old network")
+                self.net = self_before_training.net
         else:
-            print("Reverting to the old network")
-            self.net = self_before_training.net
+            print("Accepted by default (gating disabled)")
+            # Create dummy stats for history to avoid breaking structure
+            eval_stats = {
+                'score': 1.0,
+                'new_reward_mean': np.nan,
+                'new_reward_std': np.nan,
+                'old_reward_mean': np.nan,
+                'old_reward_std': np.nan
+            }
+        
+        # Calculate average game length
+        avg_game_len = np.mean([len(game_trace) for game_trace in train_example_sets])
+
+        # Record History
+        iter_idx = len(self.history['iteration']) + 1
+        self.history['iteration'].append(iter_idx)
+        self.history['reward_mean'].append(eval_stats['new_reward_mean'])
+        self.history['reward_std'].append(eval_stats['new_reward_std'])
+        self.history['loss_policy'].append(loss_policy)
+        self.history['loss_value'].append(loss_value)
+        self.history['game_length'].append(avg_game_len)
+
+        return train_losses
 
     def pit(self, self_before_training):
         "Play a bunch of games to evaluate new vs. old networks"
@@ -314,7 +374,14 @@ class Agent():
         assert wins + ties + losses == self.n_games_per_eval
         score = (wins + ties / 2) / self.n_games_per_eval  # a tie is half a win
         print(f"New network won {wins} and tied {ties} out of {self.n_games_per_eval} games ({score:.2%} wins where ties are half wins)")
-        return score
+        
+        return {
+            'score': score,
+            'new_reward_mean': new_rewards.mean(),
+            'new_reward_std': new_rewards.std(),
+            'old_reward_mean': old_rewards.mean(),
+            'old_reward_std': old_rewards.std()
+        }
     
     def play_train_multiple(self, n_trains: int, start_at = 0, checkpoint_every = None, checkpoint_dir = "general_az_1p_checkpoint"):
         for i in range(start_at, n_trains):
@@ -324,7 +391,10 @@ class Agent():
                 checkpoint_subdir = Path(checkpoint_dir) / f"{self.run_start_time}_iter_{i+1}"
                 print(f"Saving intermediate checkpoint to {checkpoint_subdir}")
                 self.save_checkpoint(checkpoint_subdir)
+                print(f"Saving intermediate checkpoint to {checkpoint_subdir}")
+                self.save_checkpoint(checkpoint_subdir)
                 self.net.save_checkpoint(checkpoint_subdir)
+        return self.history
 
     def push_multiprocessing(self):
         my_info = self.all_training_examples
