@@ -3,8 +3,8 @@ from typing import Any
 
 import numpy as np
 
-from alphazeropp.envs.game import Game
-from alphazeropp.networks.networks import PolicyValueNet
+from alphazeropp.core.game import Game
+from alphazeropp.core.policy_value_net import PolicyValueNet
 
 EPS = 1e-8  # Add to UCB numerator to avoid zeroing out the policy when total_N is 0
 

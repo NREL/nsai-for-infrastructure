@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 import itertools
-import copy
 
 import numpy as np
 
@@ -29,9 +28,7 @@ class Trainer:
                  net: PolicyValueNet,
                  game: Game,
                  n_games_per_train: int = 100,
-                 n_games_per_eval: int = 20,
                  n_past_iterations_to_train: Optional[int] = 20,
-                 threshold_to_keep: float = 0.55,
                  n_procs: Optional[int] = None,
                  checkpoint_dir: str | Path = "checkpoints"):
         """
@@ -41,9 +38,7 @@ class Trainer:
             agent: Agent instance for playing games
             net: PolicyValueNet instance
             n_games_per_train: Number of games per training iteration
-            n_games_per_eval: Number of games for evaluation
             n_past_iterations_to_train: How many past iterations to keep for training
-            threshold_to_keep: Win rate threshold to keep new network
             n_procs: Number of processes for multiprocessing
             checkpoint_dir: Directory to save checkpoints
         """
@@ -51,9 +46,7 @@ class Trainer:
         self.net = net
         self.game = game
         self.n_games_per_train = n_games_per_train
-        self.n_games_per_eval = n_games_per_eval
         self.n_past_iterations_to_train = n_past_iterations_to_train
-        self.threshold_to_keep = threshold_to_keep
         self.n_procs = n_procs
         
         self.all_training_examples = []
@@ -61,8 +54,7 @@ class Trainer:
         self.checkpoint_manager = CheckpointManager(checkpoint_dir)
         
         logger.info(f"Trainer initialized: n_games_per_train={n_games_per_train}, "
-                   f"n_games_per_eval={n_games_per_eval}, "
-                   f"threshold_to_keep={threshold_to_keep}")
+                   f"n_past_iterations_to_train={n_past_iterations_to_train}")
     
     def _collect_training_examples(self) -> list:
         """
@@ -73,7 +65,8 @@ class Trainer:
         """
         logger.info(f"Collecting {self.n_games_per_train} training games...")
         
-        mp_manager = MultiprocessingManager(self.agent)
+        # Before we start multiprocessing, we need to push the multiprocessing state to all relevant objects (like the agent and the game) to make sure they are in a consistent state across processes. After multiprocessing is done, we need to pop the multiprocessing state to restore the original state.
+        mp_manager = MultiprocessingManager(self.agent, self)
         mp_manager.push()
         multiprocessing_function = partial(
             self.agent.play_for_experience,
@@ -133,12 +126,9 @@ class Trainer:
         elapsed = time.time() - start_time
         logger.info(f"Training completed in {elapsed:.2f} seconds")
     
-    def train_iteration(self) -> bool:
+    def train_iteration(self) -> None:
         """
-        Run a single training iteration: collect examples, train, and evaluate.
-        
-        Returns:
-            True if new network is kept, False if reverted to old network
+        Run a single training iteration: collect examples and train.
         """
         logger.info("Starting training iteration...")
         start_time = time.time()
@@ -152,40 +142,11 @@ class Trainer:
         # Step 2: Process training examples
         flat_examples = self._process_training_examples(new_train_examples)
         
-        # Step 3: Save old network for comparison
-        self.game.reset_wrapper()
-        agent_before_training = copy.deepcopy(self.agent)
-        
-        # Step 4: Train network
+        # Step 3: Train network
         self._train_network(flat_examples)
-        
-        # Step 5: Evaluate new network
-        from alphazeropp.training.evaluator import Evaluator
-        evaluator = Evaluator(
-            n_games=self.n_games_per_eval,
-            n_procs=self.n_procs
-        )
-        
-        score = evaluator.pit(
-            self.agent, agent_before_training,
-            self.agent._randseed("eval"),
-            self.agent._randseed("mcts"),
-            self.agent._randseed("external_policy")
-        )
-        
-        # Step 6: Keep or revert network
-        if score >= self.threshold_to_keep:
-            logger.info(f"Keeping new network (score: {score:.2%})")
-            keep_new = True
-        else:
-            logger.info(f"Reverting to old network (score: {score:.2%})")
-            self.agent.net = agent_before_training.net
-            keep_new = False
         
         elapsed = time.time() - start_time
         logger.info(f"Training iteration completed in {elapsed:.2f} seconds")
-        
-        return keep_new
     
     def train_multiple(self, n_iterations: int, start_at: int = 0, 
                       checkpoint_every: Optional[int] = None):

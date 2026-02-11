@@ -2,10 +2,16 @@ from typing import Any, Callable
 
 import numpy as np
 
-from alphazeropp.envs.game import Game
-from alphazeropp.networks.networks import PolicyValueNet
+from alphazeropp.core.game import Game
+from alphazeropp.core.policy_value_net import PolicyValueNet
 from alphazeropp.core.mcts import MCTS, entab
 
+"""
+This is the basic implementation of the Agent class.
+It is responsible for playing the game using the policy and value network, and collecting experience for training.
+Other than that, the agent is not doing anything else, meaning that we have other classes to handle training, checkpointing, multithreading, etc. 
+This is to keep the agent class focused on its core responsibility of playing the game and collecting experience.
+"""
 
 class Agent:
     # Constants
@@ -57,7 +63,11 @@ class Agent:
             print(f"RNG seeds are not fully specified, using nondeterministic seeds for: {', '.join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds)}")
             
             
-    def policy(self, state: Game, msg=None) -> tuple[np.ndarray, Game]:
+    def _randseed(self, rng_name: str) -> int:
+        """Generate a random seed integer from the specified RNG."""
+        return int(self.rngs[rng_name].integers(0, 2**31 - 1))
+    
+    def policy(self, state: Game, msg=None) -> np.ndarray:
         """
         The function returns the move probabilities for a game state.
         Notice that it returns a tuple of (move_probs, state), where state is the original game state passed in.
@@ -70,47 +80,47 @@ class Agent:
             tuple[np.ndarray, Game]: A tuple containing the move probabilities and the original game state.
             We expect move_probs to be a numpy array of shape equal to the action space of the game.
         """
-        # We copy the original Game state to avoid modifying it during MCTS simulations
-        state = state.stash_state()
+        current_game_state = state.stash_state() # We copy the original Game state to avoid modifying it during MCTS simulations
         
         if self.external_policy is not None:
-            move_probs = self.external_policy(state)
+            move_probs = self.external_policy(current_game_state)
         else:
             mcts = MCTS(self.net, **self.mcts_params)
-            move_probs = mcts.perform_simulations(state, "") # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
+            move_probs = mcts.perform_simulations(current_game_state, "") # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
         
         assert len(move_probs.shape) == 1, "move_probs should be a flat array"
-        return move_probs, state
+        return move_probs
         
     def play_one_round(self, game: Game, max_moves: int = 10_000, random_seed: int | None = None, msg = ""):
         """
         The function plays for one round from the given game state using the agent's policy.
         """
-        original_game_state = game.stash_state()
         current_game_state = game.stash_state()
         rng = np.random.default_rng(random_seed)
         
         collected_experience = []
         for i in range(max_moves):
-            if msg: print(msg, f"at start of move {i+1}, obs is", game.obs)
+            if msg: print(msg, f"at start of move {i+1}, obs is", current_game_state.obs)
             # We assume that move_probs has already been flattened inside the policy function.
-            move_probs, current_game_state = self.policy(current_game_state, "")
+            move_probs = self.policy(current_game_state, "")
             action_idx = rng.choice(len(move_probs), p=move_probs)
             """
             The implementation here is different from the original implementation in that
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
+            experience = (current_game_state.obs, action_idx)
             
             _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
-            collected_experience.append((game.obs, action_idx, reward))
+            collected_experience.append((experience, reward))
+            breakpoint() # Double check that the experience is correctly collected and the reward is correctly obtained.
             if terminated or truncated:
                 break
             
-        return collected_experience, original_game_state
+        return collected_experience
     
-    def play_for_experience(self, id, game: Game, reset_seed:int, interaction_seed):
-        current_game = game.stash_state() # we make sure that it doesn't interfere with the original game state.
-        current_game.reset_wrapper(reset_seed)
+    def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
+        current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
+        current_game_state.reset_wrapper(reset_seed)
         
-        return self.play_one_round(current_game, random_seed=interaction_seed, msg=f"[Agent {id}]")
+        return self.play_one_round(current_game_state, random_seed=interaction_seed, msg=f"[Agent {id}]")
