@@ -1,3 +1,4 @@
+import logging
 from alphazeropp.core.policy_value_net import TorchPolicyValueNet, PolicyValueNetModel
 from .game import CartPoleGame
 
@@ -58,7 +59,7 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
             dataset = examples
         
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=tp["batch_size"], shuffle=True)
-        print(f"Training with {len(train_loader)} batches of size {tp['batch_size']}")
+        # print(f"Training with {len(train_loader)} batches of size {tp['batch_size']}")
 
         train_mini_losses = []
         train_losses = []
@@ -94,7 +95,7 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
             train_losses.append(train_loss / len(train_loader))
             if print_all_epochs or epoch == 0 or epoch == tp["epochs"] - 1:
             # if True:
-                print(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f} (value: {value_loss / len(train_loader):.4f}, policy: {policy_loss / len(train_loader):.4f}, weighted policy: {policy_weight * (policy_loss / len(train_loader)):.4f})")
+                logging.info(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f} (value: {value_loss / len(train_loader):.4f}, policy: {policy_loss / len(train_loader):.4f}, weighted policy: {policy_weight * (policy_loss / len(train_loader)):.4f})")
 
         return model, train_mini_losses, train_losses
     

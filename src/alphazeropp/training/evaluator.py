@@ -40,12 +40,14 @@ class Evaluator:
         """
         Play one eval game for each agent and return rewards.
         """
-        new_agent.game.reset_wrapper(seed=reset_seed)
-        old_agent.game = copy.deepcopy(new_agent.game)
+        base_game = new_agent.game.stash_state()
+        base_game.reset_wrapper(seed=reset_seed)
+        old_game = copy.deepcopy(base_game)
+        new_game = copy.deepcopy(base_game)
         results = {}
         
-        old_result = old_agent.play_one_round(game=old_agent.game, random_seed=mcts_seed)
-        new_result = new_agent.play_one_round(game=new_agent.game, random_seed=mcts_seed)
+        old_result = old_agent.play_one_round(game=old_game, random_seed=mcts_seed)
+        new_result = new_agent.play_one_round(game=new_game, random_seed=mcts_seed)
         
         old_sum_reward = sum(x[2] for x in old_result)
         new_sum_reward = sum(x[2] for x in new_result)
@@ -92,7 +94,8 @@ class Evaluator:
         old_rewards = np.array([r["old_net"] for r in eval_results])
         new_rewards = np.array([r["new_net"] for r in eval_results])
 
-        print(new_rewards)
+        print("new rewards:", new_rewards)
+        print("old rewards:", old_rewards)
         
         wins = np.sum(new_rewards > old_rewards)
         ties = np.sum(np.isclose(new_rewards, old_rewards))

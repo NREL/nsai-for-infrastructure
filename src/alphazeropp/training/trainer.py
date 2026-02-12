@@ -15,8 +15,6 @@ from alphazeropp.utils.multiprocessing import MultiprocessingManager
 from alphazeropp.utils.checkpoint import CheckpointManager
 
 from functools import partial
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
