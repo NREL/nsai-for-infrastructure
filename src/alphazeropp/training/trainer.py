@@ -16,7 +16,7 @@ from alphazeropp.utils.checkpoint import CheckpointManager
 
 from functools import partial
 
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -55,6 +55,15 @@ class Trainer:
         
         logger.info(f"Trainer initialized: n_games_per_train={n_games_per_train}, "
                    f"n_past_iterations_to_train={n_past_iterations_to_train}")
+        
+    def push_multiprocessing(self):
+        ### It looks like we don't need to do anything here yet
+        pass
+    
+    def pop_multiprocessing(self, *args):
+        ### It looks like we don't need to do anything here yet
+        pass
+    
     
     def _collect_training_examples(self) -> list:
         """
@@ -66,7 +75,7 @@ class Trainer:
         logger.info(f"Collecting {self.n_games_per_train} training games...")
         
         # Before we start multiprocessing, we need to push the multiprocessing state to all relevant objects (like the agent and the game) to make sure they are in a consistent state across processes. After multiprocessing is done, we need to pop the multiprocessing state to restore the original state.
-        mp_manager = MultiprocessingManager(self.agent, self)
+        mp_manager = MultiprocessingManager(self.agent.net, self)
         mp_manager.push()
         multiprocessing_function = partial(
             self.agent.play_for_experience,
@@ -84,8 +93,7 @@ class Trainer:
         finally:
             mp_manager.pop()
         
-        breakpoint() # Check what is being returned here.
-        return train_example_sets
+        return train_example_sets # This should be a list of lists of examples, where each inner list corresponds to one game.
     
     def _process_training_examples(self, new_train_examples: list) -> list:
         """
@@ -101,13 +109,15 @@ class Trainer:
         
         # Keep only recent iterations
         if self.n_past_iterations_to_train is not None and \
-           len(self.all_training_examples) > self.n_past_iterations_to_train:
+            len(self.all_training_examples) > self.n_past_iterations_to_train:
             self.all_training_examples.pop(0)
-        
-        flat_examples = list(itertools.chain.from_iterable(self.all_training_examples))
+
+        # Flatten list of lists into a single training set.
+        flat_examples_over_iteration = list(itertools.chain.from_iterable(self.all_training_examples))
+        flat_examples = list(itertools.chain.from_iterable(flat_examples_over_iteration))
         
         logger.info(f"Training examples: {[len(x) for x in self.all_training_examples]}")
-        logger.info(f"Total examples: {len(flat_examples)}, Total value: {sum(x[1][1] for x in flat_examples):.2f}")
+        logger.info(f"Total examples: {len(flat_examples)}, Total value: {sum(x[2] for x in flat_examples):.2f}")
         
         return flat_examples
     
@@ -135,13 +145,11 @@ class Trainer:
         
         # Step 1: Collect training examples
         train_example_sets = self._collect_training_examples()
-        new_train_examples = []
-        for train_examples in train_example_sets:
-            new_train_examples.extend(train_examples)
+
         
         # Step 2: Process training examples
-        flat_examples = self._process_training_examples(new_train_examples)
-        
+        flat_examples = self._process_training_examples(train_example_sets)
+            
         # Step 3: Train network
         self._train_network(flat_examples)
         

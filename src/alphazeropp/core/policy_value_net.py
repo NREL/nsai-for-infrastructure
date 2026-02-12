@@ -93,6 +93,7 @@ class TorchPolicyValueNet(PolicyValueNet):
 
     model: nn.Module
     save_file_name: str = "model_checkpoint.pt"
+    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def __init__(self, model: nn.Module):
         """
@@ -102,7 +103,7 @@ class TorchPolicyValueNet(PolicyValueNet):
             model: The neural network model to use for predictions.
         """
         super().__init__()
-        self.model = model
+        self.model = model.to(self.DEVICE)
 
     def save_checkpoint(self, save_dir):
         """
@@ -133,11 +134,11 @@ class TorchPolicyValueNet(PolicyValueNet):
 
     def push_multiprocessing(self):
         """Prepare the model for multiprocessing by moving it to CPU."""
-        self.model.cpu()
+        self.model.to("cpu")
 
     def pop_multiprocessing(self, *args):
         """Restore the model after multiprocessing."""
-        pass
+        self.model.to(self.DEVICE)
 
 class PolicyValueNetModel(nn.Module):
     """

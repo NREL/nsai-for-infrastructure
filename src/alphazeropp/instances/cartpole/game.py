@@ -11,7 +11,7 @@ class CumulativeRewardWrapper(gym.Wrapper):
         self.step_count = 0
         self.max_steps = max_steps
     
-    def reset(self, **kwargs):
+    def reset(self, *args, **kwargs):
         self.step_count = 0
         return self.env.reset(**kwargs)
     

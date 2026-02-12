@@ -3,8 +3,8 @@ from typing import Any
 
 import numpy as np
 
-from alphazeropp.core.game import Game
-from alphazeropp.core.policy_value_net import PolicyValueNet
+from .game import Game
+from .policy_value_net import PolicyValueNet
 
 EPS = 1e-8  # Add to UCB numerator to avoid zeroing out the policy when total_N is 0
 
@@ -41,10 +41,11 @@ class MCTS():
     temperature: float  # Temperature for exponentiated visit counts in the final answer
     c_exploration: float  # Exploration constant for UCB
 
-    def __init__(self, net: PolicyValueNet,
+    def __init__(self, game: Game, net: PolicyValueNet,
                  n_simulations: int = 25,
                  temperature: float = 1.0,
                  c_exploration: float = 1.0):
+        self.game = game
         self.net = net
         self.nodes = {}
 
@@ -52,25 +53,25 @@ class MCTS():
         self.temperature = temperature
         self.c_exploration = c_exploration
 
-    def perform_simulations(self, state: Game, msg=None):
+    def perform_simulations(self, msg):
         """
         Perform `n_simulations` simulations from the current game state, then return move
         probabilities from exponentiated visit counts. Special case: if `n_simulations` is
         negative, directly query the policy network rather than performing any simulations
         (results are still exponentiated).
         """
-        mystate = state.hashable_obs
-        if msg: print(msg, "at start of perform_simulations, obs is", state.obs)
+        mystate = self.game.hashable_obs
+        if msg: print(msg, "at start of perform_simulations, obs is", self.game.obs)
 
         if self.n_simulations < 0:
             if msg: print(msg, "n_simulations < 0, directly querying policy net")
             counts, _, _ = self.query_net_masked(msg)
         else:
             for i in range(self.n_simulations):
-                old_game_state = state.stash_state()
+                old_game_state = self.game.stash_state()
                 self.search(entab(msg,  f", simulation {i+1}/{self.n_simulations}"))
-                state = state.unstash_state(old_game_state)
-                assert mystate == state.hashable_obs
+                self.game = self.game.unstash_state(old_game_state)
+                assert mystate == self.game.hashable_obs
             
             mynode = self.nodes[mystate]
             
@@ -82,6 +83,8 @@ class MCTS():
         if msg: print(msg, "mynode", mynode, "counts", counts)
         counts = counts ** (1./self.temperature)
         probs = counts / counts.sum()
+        # For debugging:
+        # print(probs)
         
         return probs
         
@@ -119,12 +122,13 @@ class MCTS():
         ucbs = self.calc_masked_ucbs(mynode, entab(msg, " ucb"))
         best_action = np.unravel_index(np.argmax(ucbs), ucbs.shape)
         if msg: print(msg, "-> taking action", best_action, "based on UCBs", ucbs)
-        
+
+        # Distinguish scalar actions from 1-tuple actions and step
         to_step = best_action
         if len(self.game.action_space.shape) == 0: to_step, = to_step
         assert to_step in self.game.action_space
-        self.game.step_wrapper(to_step) 
-        
+        self.game.step_wrapper(to_step)
+
         reward = self.search(entab(msg, " recurse"))
         # reward = self.search("")
         
@@ -180,7 +184,7 @@ class MCTS():
         
         return all_ucbs
 
-    def update_edge(self, mynode: MCTSTreeNode, action: tuple, reward: float):
+    def update_edge(self, mynode: MCTSTreeNode, action: int, reward: float):
         if action not in mynode.action_N:
             assert action not in mynode.action_Q
             mynode.action_N[action] = 0  # could use a collections.Counter for this

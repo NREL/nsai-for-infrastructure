@@ -64,8 +64,8 @@ class Game(ABC, Generic[ObsType, ActType]):
         "Returns a hashable representation of the current observation `obs`."
         return self._hashable_obs_impl(self.obs)
 
-    def reset_wrapper(self, *args, **kwargs):
-        obs, info = self.reset(*args, **kwargs)
+    def reset_wrapper(self, **kwargs):
+        obs, info = self.reset(**kwargs)
         self.obs = obs
         self.reward = None
         self.terminated = None
@@ -122,8 +122,8 @@ class EnvGame(Game[ObsType, ActType]):
     def step(self, action: ActType) -> Tuple[ObsType, Any, bool, bool, dict[str, Any]]:
         return self.env.step(action)
     
-    def reset(self, *args, **kwargs) -> Tuple[ObsType, dict[str, Any]]:
-        return self.env.reset(*args, **kwargs)
+    def reset(self, **kwargs) -> Tuple[ObsType, dict[str, Any]]:
+        return self.env.reset( **kwargs)
     
     def get_action_mask(self, *args, **kwargs):
         try:

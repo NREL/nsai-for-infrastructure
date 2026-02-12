@@ -49,9 +49,9 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
         # tested outside the AlphaZero context; for this, pass `needs_reshape=False`.
         if needs_reshape:
             # PERF we could use a single Python loop for all three of these
-            states = torch.from_numpy(np.array([state for state, (_, _) in examples], dtype=np.float32))
-            policies = torch.from_numpy(np.array([policy for _, (policy, _) in examples], dtype=np.float32))
-            values = torch.from_numpy(np.array([value for _, (_, value) in examples], dtype=np.float32))
+            states = torch.from_numpy(np.array([state for state, _, _ in examples], dtype=np.float32))
+            policies = torch.from_numpy(np.array([policy for _, policy, _ in examples], dtype=np.float32))
+            values = torch.from_numpy(np.array([value for _, _, value in examples], dtype=np.float32))
             dataset = torch.utils.data.TensorDataset(states, policies, values)
         else:
             print("Skipping reshape of `examples`.")

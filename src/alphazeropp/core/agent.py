@@ -85,8 +85,8 @@ class Agent:
         if self.external_policy is not None:
             move_probs = self.external_policy(current_game_state)
         else:
-            mcts = MCTS(self.net, **self.mcts_params)
-            move_probs = mcts.perform_simulations(current_game_state, "") # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
+            mcts = MCTS(current_game_state, self.net, **self.mcts_params)
+            move_probs = mcts.perform_simulations("") # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
         
         assert len(move_probs.shape) == 1, "move_probs should be a flat array"
         return move_probs
@@ -108,12 +108,11 @@ class Agent:
             The implementation here is different from the original implementation in that
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
-            experience = (current_game_state.obs, action_idx)
+            experience = (current_game_state.obs, move_probs)
             
             _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
-            collected_experience.append((experience, reward))
-            breakpoint() # Double check that the experience is correctly collected and the reward is correctly obtained.
+            collected_experience.append((experience[0], experience[1], reward)) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
             if terminated or truncated:
                 break
             
@@ -121,6 +120,6 @@ class Agent:
     
     def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
         current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
-        current_game_state.reset_wrapper(reset_seed)
+        current_game_state.reset_wrapper(seed=reset_seed)
         
         return self.play_one_round(current_game_state, random_seed=interaction_seed, msg=f"[Agent {id}]")
