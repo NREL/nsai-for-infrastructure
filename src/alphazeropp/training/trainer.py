@@ -115,7 +115,7 @@ class Trainer:
         # Flatten list of lists into a single training set.
         flat_examples_over_iteration = list(itertools.chain.from_iterable(self.all_training_examples))
         flat_examples = list(itertools.chain.from_iterable(flat_examples_over_iteration))
-        
+        logger.info(f"total examples from recent iterations: {len(flat_examples)}")
         logger.info(f"Training examples: {[len(x) for x in self.all_training_examples]}")
         logger.info(f"Total examples: {len(flat_examples)}, Total value: {sum(x[2] for x in flat_examples):.2f}")
         

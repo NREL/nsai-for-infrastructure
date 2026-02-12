@@ -20,36 +20,47 @@ class Evaluator:
     def __init__(self, n_games: int = 20, n_procs: Optional[int] = None):
         self.n_games = n_games
         self.n_procs = n_procs
+        
+    def push_multiprocessing(self):
+        ### It looks like we don't need to do anything here yet
+        pass
+    
+    def pop_multiprocessing(self, *args):
+        ### It looks like we don't need to do anything here yet
+        pass
 
     def _play_for_eval(
         self,
         reset_seed,
         mcts_seed,
-        agent_new: Agent,
-        agent_old: Agent,
+        new_agent: Agent,
+        old_agent: Agent,
         try_without_mcts: bool = False,
     ):
         """
         Play one eval game for each agent and return rewards.
         """
-        agent_new.game.reset_wrapper(seed=reset_seed)
-        agent_old.game = copy.deepcopy(agent_new.game)
+        new_agent.game.reset_wrapper(seed=reset_seed)
+        old_agent.game = copy.deepcopy(new_agent.game)
         results = {}
-        breakpoint() # Double check that the following code collects experience correctly.
-        results["old_net"] = agent_old.play_one_round(game=agent_old.game, random_seed=mcts_seed)[-1][1][1]
-        results["new_net"] = agent_new.play_one_round(game=agent_new.game, random_seed=mcts_seed)[-1][1][1]
+        
+        old_result = old_agent.play_one_round(game=old_agent.game, random_seed=mcts_seed)
+        new_result = new_agent.play_one_round(game=new_agent.game, random_seed=mcts_seed)
+        
+        old_sum_reward = sum(x[2] for x in old_result)
+        new_sum_reward = sum(x[2] for x in new_result)
+        results["old_net"] = old_sum_reward
+        results["new_net"] = new_sum_reward
         if try_without_mcts:
             pass
-
         return results
 
     def pit(
         self,
-        agent_new: Agent,
-        agent_old: Agent,
+        new_agent: Agent,
+        old_agent: Agent,
         eval_seed: int,
         mcts_seed: int,
-        external_policy_seed: int,
         try_without_mcts: bool = False,
     ) -> float:
         """
@@ -57,17 +68,15 @@ class Evaluator:
         """
         start_time = time.time()
 
-        mp_manager = MultiprocessingManager(agent_new, agent_old, self)
+        mp_manager = MultiprocessingManager(new_agent.net, old_agent.net, self)
         mp_manager.push()
         try:
             arg_tuples = [
                 (
-                    i,
                     eval_seed + i,
                     mcts_seed + i,
-                    external_policy_seed + i,
-                    agent_new,
-                    agent_old,
+                    new_agent,
+                    old_agent,
                     try_without_mcts,
                 )
                 for i in range(self.n_games)
@@ -83,6 +92,8 @@ class Evaluator:
         old_rewards = np.array([r["old_net"] for r in eval_results])
         new_rewards = np.array([r["new_net"] for r in eval_results])
 
+        print(new_rewards)
+        
         wins = np.sum(new_rewards > old_rewards)
         ties = np.sum(np.isclose(new_rewards, old_rewards))
         losses = np.sum(new_rewards < old_rewards)

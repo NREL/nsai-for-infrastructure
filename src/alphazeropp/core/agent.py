@@ -122,4 +122,5 @@ class Agent:
         current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
         current_game_state.reset_wrapper(seed=reset_seed)
         
-        return self.play_one_round(current_game_state, random_seed=interaction_seed, msg=f"[Agent {id}]")
+        # return self.play_one_round(current_game_state, random_seed=interaction_seed, msg=f"[Agent {id}]")
+        return self.play_one_round(current_game_state, random_seed=interaction_seed, msg="")
