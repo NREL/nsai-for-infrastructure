@@ -99,6 +99,7 @@ class Agent:
         rng = np.random.default_rng(random_seed)
         
         collected_experience = []
+        collected_rewards = [] # we seperately store rewards, because we want to calculate discounted rewards at the end of the episode.
         for i in range(max_moves):
             if msg: print(msg, f"at start of move {i+1}, obs is", current_game_state.obs)
             # We assume that move_probs has already been flattened inside the policy function.
@@ -108,13 +109,24 @@ class Agent:
             The implementation here is different from the original implementation in that
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
-            experience = (current_game_state.obs, move_probs)
+            collected_experience.append((current_game_state.obs, move_probs)) # So the collected experience is a list of ((obs, move_probs), action_idx) tuples.
             
             _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
-            collected_experience.append((experience[0], experience[1], reward)) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
+            collected_rewards.append(reward) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
             if terminated or truncated:
                 break
+        
+        # Now we calculate discounted rewards and combine them with the observations and move_probs to form the final experience tuples.
+        discounted_rewards = []
+        cumulative_reward = 0.0
+        for reward in reversed(collected_rewards):
+            cumulative_reward = reward + self.reward_discount * cumulative_reward
+            discounted_rewards.append(cumulative_reward)
+        discounted_rewards.reverse() # Now discounted_rewards is in the same order as collected_experience
+        
+        collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
+        
             
         return collected_experience
     
