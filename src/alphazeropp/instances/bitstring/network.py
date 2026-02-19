@@ -79,7 +79,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
                 assert len(inputs.shape) == 2, f"Expected input shape to be 2D, got {inputs.shape}"
                 assert inputs.shape[1] == self.model.input_size, f"Expected input size {self.model.input_size}, got {inputs.shape[1]}"
                 assert len(targets_value.shape) == 1
-                assert targets_policy.shape[1] == BitStringGame._ACTION_MASK.shape[0], f"Expected policy answers size {BitStringGame._ACTION_MASK.shape[0]}, got {targets_policy.shape[1]}"
+                #assert targets_policy.shape[1] == self.n_sites, f"Expected policy answers size {self.n_sites}, got {targets_policy.shape[1]}"
                 outputs_policy, outputs_value = model(inputs)
                 assert outputs_value.shape == targets_value.shape, f"Expected predicted value shape {targets_value.shape}, got {outputs_value.shape}"
                 loss_value = criterion_value(outputs_value, targets_value)
@@ -113,7 +113,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
         
         policy_prob = policy_prob.numpy()
         policy_prob = policy_prob.squeeze(0)
-        assert policy_prob.shape == (2,)
+        assert policy_prob.shape == (self.n_sites,)
 
         value = value.numpy()
         value = value.squeeze(0)

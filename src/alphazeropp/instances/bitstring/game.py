@@ -5,6 +5,8 @@ import numpy as np
 import torch
 
 from alphazeropp.core.game import EnvGame
+
+from typing import Hashable
     
 class BitStringGym(gym.Env):
     metadata = {'render.modes': ['human']}
@@ -31,7 +33,6 @@ class BitStringGym(gym.Env):
         done = self.step_count >= self.max_steps
         r = -1.0 - self.bit_flip # Figure out why the reward funciton is designed this way.
         r = -1.0
-        
         if action == -1:
             return self.state.copy(), r, done, {}
         
@@ -49,8 +50,9 @@ class BitStringGym(gym.Env):
                 r = sum(self.state) / normalizer
             else:
                 r = 0.0
-                
-        return self.state.copy(), r, done, {}
+        truncated = done # we now set truncated to be the same as done, since we don't have a separate truncation condition.
+        
+        return self.state.copy(), r, done, truncated, {}
         
         
     def reset(self, seed = None):
@@ -70,8 +72,13 @@ class BitStringGame(EnvGame):
     def __init__(self, **kwargs):
         env = BitStringGym(**kwargs)
         super().__init__(env)
-        self._ACTION_MASK = np.ones(env.n_sites, dtype=bool)  # All actions are always available
+        self.action_mask = np.ones(env.n_sites, dtype=bool)  # All actions are always available
     
     def get_action_mask(self):
-        return self._ACTION_MASK
+        return self.action_mask
+    
+    @property
+    def hashable_obs(self) -> Hashable:
+        "Returns a hashable representation of the current observation `obs`."
+        return "".join([str(int(x)) for x in self.obs])  + " " + str(self.env.step_count)
     
