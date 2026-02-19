@@ -60,9 +60,11 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
         
         train_loader = torch.utils.data.DataLoader(dataset, batch_size=tp["batch_size"], shuffle=True)
         # print(f"Training with {len(train_loader)} batches of size {tp['batch_size']}")
-
-        train_mini_losses = []
+        
+        train_batch_losses = []
         train_losses = []
+        policy_losses = []
+        value_losses = []
 
         for epoch in range(tp["epochs"]):
             # Training phase
@@ -87,17 +89,19 @@ class CartPolePolicyValueNet(TorchPolicyValueNet):
                 loss.backward()
                 optimizer.step()
                 loss = loss.item()
-                train_mini_losses.append(loss)
+                train_batch_losses.append(loss)
                 train_loss += loss
-                policy_loss += loss_policy
-                value_loss += loss_value
+                policy_loss += loss_policy.item()
+                value_loss += loss_value.item()
 
             train_losses.append(train_loss / len(train_loader))
+            policy_losses.append(policy_loss / len(train_loader))
+            value_losses.append(value_loss / len(train_loader))
             if print_all_epochs or epoch == 0 or epoch == tp["epochs"] - 1:
             # if True:
                 logging.info(f"Epoch {epoch+1}/{tp['epochs']}, Train Loss: {train_losses[-1]:.4f} (value: {value_loss / len(train_loader):.4f}, policy: {policy_loss / len(train_loader):.4f}, weighted policy: {policy_weight * (policy_loss / len(train_loader)):.4f})")
 
-        return model, train_mini_losses, train_losses
+        return model, train_batch_losses, train_losses, policy_losses, value_losses
     
     def predict(self, state):
         self.model.cpu()

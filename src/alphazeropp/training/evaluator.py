@@ -7,6 +7,7 @@ import numpy as np
 
 from alphazeropp.core.agent import Agent
 from alphazeropp.utils.multiprocessing import MultiprocessingManager
+from alphazeropp.utils.statistics import StatisticsManager
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class Evaluator:
     def __init__(self, n_games: int = 20, n_procs: Optional[int] = None):
         self.n_games = n_games
         self.n_procs = n_procs
+        self.statistics_manager = StatisticsManager()
         
     def push_multiprocessing(self):
         ### It looks like we don't need to do anything here yet
@@ -93,6 +95,14 @@ class Evaluator:
 
         old_rewards = np.array([r["old_net"] for r in eval_results])
         new_rewards = np.array([r["new_net"] for r in eval_results])
+
+        statistics = {
+            "new_rewards_mean": np.mean(new_rewards),
+            "old_rewards_mean": np.mean(old_rewards),
+            "new_rewards_std": np.std(new_rewards),
+            "old_rewards_std": np.std(old_rewards),
+        }
+        self.statistics_manager.record(statistics)
 
         print("new rewards:", new_rewards)
         print("old rewards:", old_rewards)

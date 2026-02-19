@@ -13,6 +13,7 @@ from alphazeropp.core.policy_value_net import PolicyValueNet
 from alphazeropp.core.game import Game
 from alphazeropp.utils.multiprocessing import MultiprocessingManager
 from alphazeropp.utils.checkpoint import CheckpointManager
+from alphazeropp.utils.statistics import StatisticsManager
 
 from functools import partial
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class Trainer:
         self.all_training_examples = []
         self.run_start_time = int(time.time())
         self.checkpoint_manager = CheckpointManager(checkpoint_dir)
+        self.statistics_manager = StatisticsManager(self.run_start_time)
         
         logger.info(f"Trainer initialized: n_games_per_train={n_games_per_train}, "
                    f"n_past_iterations_to_train={n_past_iterations_to_train}")
@@ -129,10 +131,17 @@ class Trainer:
         logger.info(f"Training on {len(flat_examples)} examples...")
         start_time = time.time()
         
-        self.net.train(flat_examples)
+        _, train_batch_losses, train_losses, policy_losses, value_losses = self.net.train(flat_examples)
         
         elapsed = time.time() - start_time
         logger.info(f"Training completed in {elapsed:.2f} seconds")
+        statistics = {
+            "train_loss": np.mean(train_losses),
+            "train_loss_policy": np.mean(policy_losses),
+            "train_loss_value": np.mean(value_losses),
+            "num_examples": len(flat_examples),
+        }
+        self.statistics_manager.record(statistics)
     
     def train_iteration(self) -> None:
         """
