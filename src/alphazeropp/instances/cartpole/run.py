@@ -7,27 +7,7 @@ from alphazeropp.training.evaluator import Evaluator
 from .game import CartPoleGame
 from .network import CartPolePolicyValueNet
 
-
-def run_single_episode(
-    agent: Agent,
-    game: CartPoleGame,
-    seed: int | None = None,
-    max_moves: int = 500,
-):
-    """Run one episode using the agent policy and return total reward and steps."""
-    rng = np.random.default_rng(seed)
-    game.reset_wrapper(seed=seed)
-    total_reward = 0.0
-    for _ in range(max_moves):
-        move_probs = agent.policy(game)
-        action = int(rng.choice(len(move_probs), p=move_probs))
-        _, reward, terminated, truncated, _ = game.step_wrapper(action)
-        if reward is not None:
-            total_reward += float(reward)
-        if terminated or truncated:
-            break
-    return total_reward, game.step_count
-
+import copy as copy
 
 def main():
     game = CartPoleGame()
@@ -43,18 +23,25 @@ def main():
         agent=agent,
         net=net,
         game=game,
-        n_games_per_train=10,
-        n_past_iterations_to_train=5,
+        n_games_per_train=100,
+        n_past_iterations_to_train=20,
         n_procs=-1,
     )
-    evaluator = Evaluator(n_games=5, n_procs=-1)
-
-    total_reward, steps = run_single_episode(agent, game, seed=0)
-    print(f"Episode done: steps={steps}, total_reward={total_reward:.3f}")
-
-    # Example usage:
-    # trainer.train_iteration()
-    # evaluator.pit(agent_new=agent, agent_old=agent, eval_seed=0, mcts_seed=1, external_policy_seed=2)
+    evaluator = Evaluator(n_games=20, n_procs=-1)
+    
+    for i in range(20):
+        old_agent = copy.deepcopy(trainer.agent)
+        trainer.train_multiple(n_iterations=1)
+        new_agent = copy.deepcopy(trainer.agent)
+        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent, eval_seed=0, mcts_seed=1)
+        if score >= 0.55:
+            print("Keeping the new network")
+            trainer.net = new_agent.net
+            agent.net = new_agent.net
+        else:
+            print("Reverting to the old network")
+            trainer.net = old_agent.net
+            agent.net = old_agent.net
 
 
 if __name__ == "__main__":
