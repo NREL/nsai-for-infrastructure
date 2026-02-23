@@ -50,9 +50,11 @@ class Evaluator:
         
         old_result = old_agent.play_one_round(game=old_game, random_seed=mcts_seed)
         new_result = new_agent.play_one_round(game=new_game, random_seed=mcts_seed)
-        
-        old_sum_reward = sum(x[2] for x in old_result)
-        new_sum_reward = sum(x[2] for x in new_result)
+        # breakpoint()
+        # old_sum_reward = sum(x[2] for x in old_result)
+        # new_sum_reward = sum(x[2] for x in new_result)
+        old_sum_reward = old_result[0][2]
+        new_sum_reward = new_result[0][2]
         results["old_net"] = old_sum_reward
         results["new_net"] = new_sum_reward
         if try_without_mcts:
@@ -63,8 +65,6 @@ class Evaluator:
         self,
         new_agent: Agent,
         old_agent: Agent,
-        eval_seed: int,
-        mcts_seed: int,
         try_without_mcts: bool = False,
     ) -> float:
         """
@@ -77,8 +77,8 @@ class Evaluator:
         try:
             arg_tuples = [
                 (
-                    eval_seed + i,
-                    mcts_seed + i,
+                    old_agent._randseed("eval"),
+                    old_agent._randseed("mcts"),
                     new_agent,
                     old_agent,
                     try_without_mcts,

@@ -17,6 +17,7 @@ def main():
         net=net,
         mcts_params={"n_simulations": 25, "temperature": 1.0, "c_exploration": 1.0},
         external_policy=None,
+        random_seeds={"mcts": 0, "train": 1, "eval": 2, "external_policy": 3},
     )
 
     trainer = Trainer(
