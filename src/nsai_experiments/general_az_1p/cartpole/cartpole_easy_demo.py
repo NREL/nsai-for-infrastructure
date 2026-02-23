@@ -21,6 +21,7 @@ def main():
                     n_past_iterations_to_train=2,
                     mcts_params={"c_exploration": 0.2})
 
+    # Keep the easy demo short so tests complete quickly.
     myagent.play_train_multiple(3)
 
 if __name__ == "__main__":
