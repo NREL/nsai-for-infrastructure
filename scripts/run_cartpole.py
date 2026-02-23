@@ -44,8 +44,8 @@ def main():
         agent=agent,
         net=net,
         game=game,
-        n_games_per_train=100,
-        n_past_iterations_to_train=20,
+        n_games_per_train=10,
+        n_past_iterations_to_train=5,
         n_procs=-1,
     )
     evaluator = Evaluator(n_games=20, n_procs=-1)
@@ -55,7 +55,7 @@ def main():
         old_agent = copy.deepcopy(trainer.agent)
         trainer.train_multiple(n_iterations=1)
         new_agent = copy.deepcopy(trainer.agent)
-        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent, eval_seed=0, mcts_seed=1)
+        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
         print(score)
         if score >= 0.55:
             print("Keeping the new network")

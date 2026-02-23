@@ -31,7 +31,9 @@ class MCTSTreeNode():
 
         self.total_N = 0
         self.action_Q = {}
+        self.action_Q = {}
         self.action_N = {}
+        self.q_u_history = []  # Log of (q, u) pairs for diagnosis
 
 class MCTS():
     game: Game
@@ -44,7 +46,9 @@ class MCTS():
     def __init__(self, game: Game, net: PolicyValueNet,
                  n_simulations: int = 25,
                  temperature: float = 1.0,
-                 c_exploration: float = 1.0):
+                 c_exploration: float = 1.0,
+                 dirichlet_alpha: float = 0.3,
+                 dirichlet_epsilon: float = 0.25):
         self.game = game
         self.net = net
         self.nodes = {}
@@ -52,8 +56,14 @@ class MCTS():
         self.n_simulations = n_simulations
         self.temperature = temperature
         self.c_exploration = c_exploration
+        self.dirichlet_alpha = dirichlet_alpha
+        self.dirichlet_epsilon = dirichlet_epsilon
 
-    def perform_simulations(self, msg):
+        # min max Q value
+        self.q_min = float('inf')
+        self.q_max = float('-inf')
+
+    def perform_simulations(self, msg, add_noise=False):
         """
         Perform `n_simulations` simulations from the current game state, then return move
         probabilities from exponentiated visit counts. Special case: if `n_simulations` is
@@ -61,12 +71,51 @@ class MCTS():
         (results are still exponentiated).
         """
         mystate = self.game.hashable_obs
+        # Reset min-max Q stats at start of search over this move
+        self.q_min = float('inf')
+        self.q_max = float('-inf')
+
         if msg: print(msg, "at start of perform_simulations, obs is", self.game.obs)
 
         if self.n_simulations < 0:
             if msg: print(msg, "n_simulations < 0, directly querying policy net")
             counts, _, _ = self.query_net_masked(msg)
         else:
+            # Check for root node existence and expand if needed
+            if mystate not in self.nodes:
+                if msg: print(msg, "Root node not found, expanding immediately")
+                # Temporarily stash state to query net safely
+                old_game_state = self.game.stash_state()
+                self.search(entab(msg, ", root expand"))
+                self.game = self.game.unstash_state(old_game_state)
+            
+            mynode = self.nodes[mystate]
+
+            # Add Dirichlet Noise (only if requested and node is fresh)
+            if add_noise and mynode.total_N == 0:
+                if msg: print(msg, f"Adding Dirichlet Noise (alpha={self.dirichlet_alpha}, eps={self.dirichlet_epsilon})")
+                noise = np.random.dirichlet([self.dirichlet_alpha] * len(mynode.nn_policy))
+                
+                # Apply noise only to valid moves to preserve the mask
+                # Optimization: if using masked policy, we should mix noise properly.
+                # Here we assume nn_policy is already masked and normalized by query_net_masked.
+                # However, Dirichlet noise is over ALL entries usually.
+                # Standard AlphaZero: add noise to legal moves only, or add to all and re-mask.
+                
+                # Rigorous approach: Mix noise into policy, then re-mask and re-normalize.
+                # But since our policy is already masked, mixing with unmasked noise might introduce invalid moves.
+                # So we should mask the noise too.
+                
+                mask = mynode.action_mask
+                masked_noise = noise * mask
+                sum_noise = masked_noise.sum()
+                if sum_noise > 0:
+                    masked_noise /= sum_noise
+                    mynode.nn_policy = (1 - self.dirichlet_epsilon) * mynode.nn_policy + self.dirichlet_epsilon * masked_noise
+                else: 
+                     # Should basically never happen if mask has valid moves
+                     warnings.warn("Dirichlet noise sum is zero after masking, skipping noise injection")
+
             for i in range(self.n_simulations):
                 old_game_state = self.game.stash_state()
                 self.search(entab(msg,  f", simulation {i+1}/{self.n_simulations}"))
@@ -105,7 +154,9 @@ class MCTS():
         # Base case: in a terminal state, return the direct reward
         if mynode.is_terminal_state:
             if msg: print(msg, "Reached terminal state", self.game.obs, "reward", mynode.direct_reward)
-            return mynode.direct_reward
+            # The reward for entering this state is already captured by the parent node.
+            # The future value of a terminal state is 0.
+            return 0.0
         
         # Base case: at a new node, query the policy-value network
         if mynode.nn_policy is None:
@@ -128,14 +179,24 @@ class MCTS():
         if len(self.game.action_space.shape) == 0: to_step, = to_step
         assert to_step in self.game.action_space
         self.game.step_wrapper(to_step)
+        
+        # Capture the immediate reward from the transition
+        immediate_reward = self.game.reward
 
-        reward = self.search(entab(msg, " recurse"))
+        # Recursively get the value of the next state (V(s'))
+        future_value = self.search(entab(msg, " recurse"))
         # reward = self.search("")
         
-        self.update_edge(mynode, best_action, reward)
+        # Bellman update: Q(s,a) = R(s,a) + gamma * V(s')
+        # Assuming gamma (discount) is 1.0 since it's not strictly passed to MCTS here,
+        # but typically AlphaZero treats it as such or the game handles return calculation.
+        # However, for dense rewards, we MUST add the immediate reward.
+        total_reward = immediate_reward + future_value
+        
+        self.update_edge(mynode, best_action, total_reward)
         mynode.total_N += 1
         
-        return reward
+        return total_reward
 
     def query_net(self, msg):
         "Query the policy-value network and perform some basic validation"
@@ -172,11 +233,26 @@ class MCTS():
         all_ucbs = np.full(mynode.nn_policy.shape, -np.inf)
         
         # Calculate UCB for each valid action
+        # Calculate UCB for each valid action
         for action in valid_actions:
             q = mynode.action_Q.get(action, 0.0)
             n = mynode.action_N.get(action, 0)
-            ucb = q + self.c_exploration * mynode.nn_policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
+            
+            # Normalize Q using global min/max seen during search
+            if self.q_min == float('inf') or self.q_max == float('-inf'):
+                q_normalized = 0.0
+            elif self.q_max > self.q_min:
+                q_normalized = (q - self.q_min) / (self.q_max - self.q_min)
+            else:
+                # q_max == q_min
+                q_normalized = 0.5
+            
+            # Use normalized Q for UCB
+            u_val = self.c_exploration * mynode.nn_policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
+            ucb = q_normalized + u_val
             all_ucbs[action] = ucb
+            
+            mynode.q_u_history.append((q, u_val))
             
             if msg:
                 print(msg, "calc_ucb for action", action, "action Q", q, "c_exploration", self.c_exploration, "nn policy", mynode.nn_policy[action], "total N", mynode.total_N, "action N", n)
@@ -192,3 +268,10 @@ class MCTS():
         
         mynode.action_Q[action] = (mynode.action_N[action] * mynode.action_Q[action] + reward) / (1 + mynode.action_N[action])
         mynode.action_N[action] += 1
+
+        # Update global min/max Q
+        new_q = mynode.action_Q[action]
+        if new_q < self.q_min:
+            self.q_min = new_q
+        if new_q > self.q_max:
+            self.q_max = new_q

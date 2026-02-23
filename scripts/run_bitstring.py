@@ -36,7 +36,7 @@ def main():
     agent = Agent(
         game=game,
         net=net,
-        mcts_params={"n_simulations": 25, "temperature": 1.0, "c_exploration": 1.0},
+        mcts_params={"n_simulations": 50, "temperature": 1.0, "c_exploration": 1.5, "dirichlet_alpha": 0.3, "dirichlet_epsilon": 0.25},
         external_policy=None,
     )
 
@@ -51,20 +51,20 @@ def main():
     evaluator = Evaluator(n_games=20, n_procs=-1)
 
     # Example usage:
-    for i in range(20):
+    for i in range(100):
         old_agent = copy.deepcopy(trainer.agent)
         trainer.train_multiple(n_iterations=1)
         new_agent = copy.deepcopy(trainer.agent)
-        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent, eval_seed=0, mcts_seed=1)
+        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
         print(score)
-        if score >= 0.55:
-            print("Keeping the new network")
-            trainer.net = new_agent.net
-            agent.net = new_agent.net
-        else:
-            print("Reverting to the old network")
-            trainer.net = old_agent.net
-            agent.net = old_agent.net
+        # if score >= 0.55:
+        #     print("Keeping the new network")
+        #     trainer.net = new_agent.net
+        #     agent.net = new_agent.net
+        # else:
+        #     print("Reverting to the old network")
+        #     trainer.net = old_agent.net
+        #     agent.net = old_agent.net
 
         if i % 5 == 0:
             plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path="bitstring_training_metrics.png")
