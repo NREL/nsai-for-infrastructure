@@ -86,7 +86,7 @@ class Agent:
             move_probs = self.external_policy(current_game_state)
         else:
             mcts = MCTS(current_game_state, self.net, **self.mcts_params)
-            move_probs = mcts.perform_simulations("") # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
+            move_probs = mcts.perform_simulations("", add_noise=True) # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
         
         assert len(move_probs.shape) == 1, "move_probs should be a flat array"
         return move_probs
@@ -100,6 +100,7 @@ class Agent:
         
         collected_experience = []
         collected_rewards = [] # we seperately store rewards, because we want to calculate discounted rewards at the end of the episode.
+        cumulative_reward = 0.0
         for i in range(max_moves):
             if msg: print(msg, f"at start of move {i+1}, obs is", current_game_state.obs)
             # We assume that move_probs has already been flattened inside the policy function.
@@ -114,6 +115,7 @@ class Agent:
             _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
             collected_rewards.append(reward) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
+            cumulative_reward += reward
             if terminated or truncated:
                 break
         
@@ -128,7 +130,7 @@ class Agent:
         collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
         
             
-        return collected_experience
+        return collected_experience, cumulative_reward
     
     def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
         current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.

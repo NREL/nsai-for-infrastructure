@@ -92,7 +92,6 @@ class Trainer:
             )
         finally:
             mp_manager.pop()
-        
         return train_example_sets # This should be a list of lists of examples, where each inner list corresponds to one game.
     
     def _process_training_examples(self, new_train_examples: list) -> list:
@@ -153,10 +152,13 @@ class Trainer:
         # Step 1: Collect training examples
         train_example_sets = self._collect_training_examples()
 
+        experience = []
+        for example_set in train_example_sets:
+            experience.append(example_set[0]) # we get rid of the culumative return term
         
         # Step 2: Process training examples
-        flat_examples = self._process_training_examples(train_example_sets)
-            
+        flat_examples = self._process_training_examples(experience)
+        
         # Step 3: Train network
         self._train_network(flat_examples)
         

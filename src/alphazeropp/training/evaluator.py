@@ -48,15 +48,12 @@ class Evaluator:
         new_game = copy.deepcopy(base_game)
         results = {}
         
-        old_result = old_agent.play_one_round(game=old_game, random_seed=mcts_seed)
-        new_result = new_agent.play_one_round(game=new_game, random_seed=mcts_seed)
-        # breakpoint()
+        old_trajectory, old_cumulative_reward = old_agent.play_one_round(game=old_game, random_seed=mcts_seed)
+        new_trajectory, new_cumulative_reward = new_agent.play_one_round(game=new_game, random_seed=mcts_seed)
         # old_sum_reward = sum(x[2] for x in old_result)
         # new_sum_reward = sum(x[2] for x in new_result)
-        old_sum_reward = old_result[0][2]
-        new_sum_reward = new_result[0][2]
-        results["old_net"] = old_sum_reward
-        results["new_net"] = new_sum_reward
+        results["old_net"] = old_cumulative_reward
+        results["new_net"] = new_cumulative_reward
         if try_without_mcts:
             pass
         return results
@@ -92,7 +89,6 @@ class Evaluator:
             )
         finally:
             mp_manager.pop()
-
         old_rewards = np.array([r["old_net"] for r in eval_results])
         new_rewards = np.array([r["new_net"] for r in eval_results])
 

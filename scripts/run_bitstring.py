@@ -36,7 +36,7 @@ def main():
     agent = Agent(
         game=game,
         net=net,
-        mcts_params={"n_simulations": 50, "temperature": 1.0, "c_exploration": 1.5, "dirichlet_alpha": 0.3, "dirichlet_epsilon": 0.25},
+        mcts_params={"n_simulations": 120, "temperature": 1.0, "c_exploration": 1.5, "dirichlet_alpha": 0.3, "dirichlet_epsilon": 0.25},
         external_policy=None,
     )
 
@@ -45,7 +45,7 @@ def main():
         net=net,
         game=game,
         n_games_per_train=100,
-        n_past_iterations_to_train=20,
+        n_past_iterations_to_train=5,
         n_procs=-1,
     )
     evaluator = Evaluator(n_games=20, n_procs=-1)

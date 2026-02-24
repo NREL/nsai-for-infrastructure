@@ -31,18 +31,19 @@ class BitStringGym(gym.Env):
         
         self.step_count += 1
         done = self.step_count >= self.max_steps
-        r = -1.0 - self.bit_flip # Figure out why the reward funciton is designed this way.
-        r = -1.0
+        r = -1.0 / self.n_sites 
+        
         if action == -1:
             return self.state.copy(), r, done, {}
         
         if self.state[action] == 0:
-            r = 1.0
+            r = 1.0 / self.n_sites
+            
         if self.bit_flip:
             self.state[action] = 1 - self.state[action]  # Flip the bit
         else:
-            self.state[action] = 1.0
-        done = done or np.all(self.state == 1.0)
+            self.state[action] = 1
+        done = done or sum(self.state) == self.n_sites
         
         normalizer = self.n_sites
         if self.sparse_reward:
@@ -63,7 +64,7 @@ class BitStringGym(gym.Env):
             
         ones = np.random.choice(range(self.n_sites), self.n_ones, replace=False)
         self.state = np.zeros(self.n_sites, dtype=np.float32)
-        self.state[ones] = 1.0
+        self.state[ones] = 1
         self.step_count = 0
         
         return self.state.copy(), {}

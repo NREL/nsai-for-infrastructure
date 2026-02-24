@@ -1,7 +1,5 @@
 import logging
 from alphazeropp.core.policy_value_net import TorchPolicyValueNet, PolicyValueNetModel
-from alphazeropp.envs.cartpole import CartPoleGame
-from .game import BitStringGame
 
 from alphazeropp.utils import get_device
 
@@ -18,7 +16,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
         "batch_size": 32,
         "learning_rate": 0.001,
         "weight_decay": 1e-4,
-        "policy_weight": 1.0,
+        "policy_weight": 2.0,
     }
     
     def __init__(self, random_seed = None, n_sites=10, n_hidden_layers = 2, hidden_size = 128, training_params = {}, device = None):
