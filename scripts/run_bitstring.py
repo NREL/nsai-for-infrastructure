@@ -4,12 +4,7 @@ use_deterministic_cuda()
 
 import numpy as np
 
-from alphazeropp.core.agent import Agent
-from alphazeropp.training.trainer import Trainer
-from alphazeropp.training.evaluator import Evaluator
-
-from alphazeropp.instances.bitstring.game import BitStringGame
-from alphazeropp.instances.bitstring.network import BitStringPolicyValueNet
+from alphazeropp.instances import BitStringConfig
 
 import copy
 
@@ -31,44 +26,31 @@ def models_equal(m1, m2):
     return True
 
 def main():
-    game = BitStringGame(n_sites=20, bit_flip=True, sparse_reward=True)
-    net = BitStringPolicyValueNet(n_sites=20)
-    agent = Agent(
-        game=game,
-        net=net,
-        mcts_params={"n_simulations": 120, "temperature": 1.0, "c_exploration": 1.5, "dirichlet_alpha": 0.3, "dirichlet_epsilon": 0.25},
-        external_policy=None,
-        random_seeds={"mcts": 46, "train":49, "eval":52, "external_policy":68}
-    )
-
-    trainer = Trainer(
-        agent=agent,
-        net=net,
-        game=game,
-        n_games_per_train=100,
-        n_past_iterations_to_train=5,
-        n_procs=8,
-    )
-    evaluator = Evaluator(n_games=20, n_procs=8)
-
+    cfg = BitStringConfig()
+    cfg.agent.random_seeds["mcts"] = 43
+    cfg.agent.random_seeds["train"] = 47
+    cfg.agent.random_seeds["eval"] = 23
+    game, net, agent, trainer, evaluator = cfg.build()
+    cfg.save("bitstring_config.json")
+    breakpoint()
     # Example usage:
-    for i in range(100):
+    for i in range(cfg.run.n_iterations):
         old_agent = copy.deepcopy(trainer.agent)
         trainer.train_multiple(n_iterations=1)
         new_agent = copy.deepcopy(trainer.agent)
         score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
         print(score)
-        if score >= 0.55:
-            print("Keeping the new network")
-            trainer.net = new_agent.net
-            agent.net = new_agent.net
-        else:
-            print("Reverting to the old network")
-            trainer.net = old_agent.net
-            agent.net = old_agent.net
+        # if score >= cfg.run.accept_threshold:
+        #     print("Keeping the new network")
+        #     trainer.net = new_agent.net
+        #     agent.net = new_agent.net
+        # else:
+        #     print("Reverting to the old network")
+        #     trainer.net = old_agent.net
+        #     agent.net = old_agent.net
 
-        if i % 5 == 0:
-            plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path="bitstring_training_metrics.png")
+        if i % cfg.run.plot_every == 0:
+            plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path=cfg.run.plot_path)
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None):
     """

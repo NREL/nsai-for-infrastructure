@@ -114,7 +114,7 @@ class MetaConfig(ABC):
 			return
 
 		fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-		fig.suptitle("MetaConfig Overview", fontsize=16, fontweight='bold')
+		fig.suptitle("Config Overview", fontsize=16, fontweight='bold')
 
 		# Plot 1: Agent Config
 		ax = axes[0, 0]
