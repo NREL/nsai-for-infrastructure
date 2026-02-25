@@ -31,7 +31,7 @@ def models_equal(m1, m2):
     return True
 
 def main():
-    game = BitStringGame(n_sites=20)
+    game = BitStringGame(n_sites=20, bit_flip=True, sparse_reward=True)
     net = BitStringPolicyValueNet(n_sites=20)
     agent = Agent(
         game=game,

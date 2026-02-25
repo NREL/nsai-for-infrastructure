@@ -11,10 +11,10 @@ from typing import Hashable
 class BitStringGym(gym.Env):
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, n_sites=10):
+    def __init__(self, n_sites=10, bit_flip=True, sparse_reward=True):
         super().__init__()
-        self.bit_flip = True
-        self.sparse_reward = True
+        self.bit_flip = bit_flip
+        self.sparse_reward = sparse_reward
         self.n_ones = 2 # Number of 1s that are initialized as 1
         
         self.n_sites = n_sites
