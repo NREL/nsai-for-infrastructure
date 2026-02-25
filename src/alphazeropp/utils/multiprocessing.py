@@ -1,7 +1,7 @@
 import os
 import warnings
 import itertools
-from multiprocessing import Pool
+from torch.multiprocessing import get_context
 
 
 class MultiprocessingManager:
@@ -51,8 +51,9 @@ class MultiprocessingManager:
         Returns:
             List of results from fn(*args) for each args in arg_tuples
         """
+        ctx = get_context("spawn")  # Use 'spawn' to avoid issues with forking in some environments
         if n_procs is None or n_procs >= 0:
-            with Pool(processes=n_procs) as pool:
+            with ctx.Pool(processes=n_procs) as pool:
                 results = pool.starmap(fn, arg_tuples)
         else:
             results = list(itertools.starmap(fn, arg_tuples))

@@ -110,7 +110,7 @@ class Agent:
             The implementation here is different from the original implementation in that
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
-            collected_experience.append((current_game_state.obs, move_probs)) # So the collected experience is a list of ((obs, move_probs), action_idx) tuples.
+            collected_experience.append((current_game_state.obs.copy(), move_probs)) # So the collected experience is a list of ((obs, move_probs), action_idx) tuples.
             
             _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
             
@@ -133,6 +133,8 @@ class Agent:
         return collected_experience, cumulative_reward
     
     def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
+        import torch
+        torch.cuda.init() # We need to initialize CUDA in the child process before we can use the network, otherwise we may encounter issues with CUDA context initialization in multiprocessing.
         current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
         current_game_state.reset_wrapper(seed=reset_seed)
         

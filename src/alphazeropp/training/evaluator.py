@@ -42,6 +42,8 @@ class Evaluator:
         """
         Play one eval game for each agent and return rewards.
         """
+        import torch
+        torch.cuda.init()
         base_game = new_agent.game.stash_state()
         base_game.reset_wrapper(seed=reset_seed)
         old_game = copy.deepcopy(base_game)

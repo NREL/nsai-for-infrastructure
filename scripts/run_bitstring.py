@@ -31,13 +31,14 @@ def models_equal(m1, m2):
     return True
 
 def main():
-    game = BitStringGame()
-    net = BitStringPolicyValueNet()
+    game = BitStringGame(n_sites=20)
+    net = BitStringPolicyValueNet(n_sites=20)
     agent = Agent(
         game=game,
         net=net,
         mcts_params={"n_simulations": 120, "temperature": 1.0, "c_exploration": 1.5, "dirichlet_alpha": 0.3, "dirichlet_epsilon": 0.25},
         external_policy=None,
+        random_seeds={"mcts": 46, "train":49, "eval":52, "external_policy":68}
     )
 
     trainer = Trainer(
@@ -46,9 +47,9 @@ def main():
         game=game,
         n_games_per_train=100,
         n_past_iterations_to_train=5,
-        n_procs=-1,
+        n_procs=8,
     )
-    evaluator = Evaluator(n_games=20, n_procs=-1)
+    evaluator = Evaluator(n_games=20, n_procs=8)
 
     # Example usage:
     for i in range(100):
@@ -57,14 +58,14 @@ def main():
         new_agent = copy.deepcopy(trainer.agent)
         score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
         print(score)
-        # if score >= 0.55:
-        #     print("Keeping the new network")
-        #     trainer.net = new_agent.net
-        #     agent.net = new_agent.net
-        # else:
-        #     print("Reverting to the old network")
-        #     trainer.net = old_agent.net
-        #     agent.net = old_agent.net
+        if score >= 0.55:
+            print("Keeping the new network")
+            trainer.net = new_agent.net
+            agent.net = new_agent.net
+        else:
+            print("Reverting to the old network")
+            trainer.net = old_agent.net
+            agent.net = old_agent.net
 
         if i % 5 == 0:
             plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path="bitstring_training_metrics.png")
