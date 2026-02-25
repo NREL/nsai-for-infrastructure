@@ -1,1 +1,2 @@
-from .cartpole.run import main as run_cartpole
+from .bitstring.config import BitStringConfig
+from .cartpole.config import CartPoleConfig
