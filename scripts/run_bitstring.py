@@ -32,13 +32,13 @@ def models_equal(m1, m2):
 # ---------------------------------------------------------------------------
 
 def _build_param_table(cfg):
-    """Build a list of (number, label, value, setter) for all editable params."""
+    """Build a list of (number, label, value, setter, description) for all editable params."""
     params = []
     n = 1
 
-    def add(label, value, setter):
+    def add(label, value, setter, desc=""):
         nonlocal n
-        params.append((n, label, value, setter))
+        params.append((n, label, value, setter, desc))
         n += 1
 
     # Game
@@ -46,50 +46,69 @@ def _build_param_table(cfg):
         cfg.game.kwargs["n_sites"] = val
         cfg.net.kwargs["n_sites"] = val
 
-    for k in ["n_sites", "bit_flip", "sparse_reward"]:
-        v = cfg.game.kwargs[k]
-        if k == "n_sites":
-            add(k, v, _set_n_sites)
-        else:
-            add(k, v, lambda val, _k=k: cfg.game.kwargs.__setitem__(_k, val))
+    add("n_sites", cfg.game.kwargs["n_sites"], _set_n_sites,
+        "Length of the binary vector")
+    add("bit_flip", cfg.game.kwargs["bit_flip"],
+        lambda val: cfg.game.kwargs.__setitem__("bit_flip", val),
+        "Actions flip bits (vs set bits)")
+    add("sparse_reward", cfg.game.kwargs["sparse_reward"],
+        lambda val: cfg.game.kwargs.__setitem__("sparse_reward", val),
+        "Reward only at episode end")
 
     # MCTS
+    descs = {
+        "n_simulations":    "MCTS rollouts per move",
+        "temperature":      "Exploration temperature for action selection",
+        "c_exploration":    "UCB exploration constant",
+        "dirichlet_alpha":  "Dirichlet noise concentration parameter",
+        "dirichlet_epsilon": "Weight of Dirichlet noise at root",
+    }
     for k in ["n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon"]:
         if k in cfg.agent.mcts_params:
             v = cfg.agent.mcts_params[k]
-            add(k, v, lambda val, _k=k: cfg.agent.mcts_params.__setitem__(_k, val))
+            add(k, v, lambda val, _k=k: cfg.agent.mcts_params.__setitem__(_k, val),
+                descs[k])
 
     # Agent
     add("reward_discount", cfg.agent.reward_discount,
-        lambda val: setattr(cfg.agent, "reward_discount", val))
+        lambda val: setattr(cfg.agent, "reward_discount", val),
+        "Discount factor for future rewards")
 
     # Trainer
     add("n_games_per_train", cfg.trainer.n_games_per_train,
-        lambda val: setattr(cfg.trainer, "n_games_per_train", val))
+        lambda val: setattr(cfg.trainer, "n_games_per_train", val),
+        "Self-play games per training iteration")
     add("n_past_iters", cfg.trainer.n_past_iterations_to_train,
-        lambda val: setattr(cfg.trainer, "n_past_iterations_to_train", val))
+        lambda val: setattr(cfg.trainer, "n_past_iterations_to_train", val),
+        "Past iterations kept in training buffer")
     add("n_procs", cfg.trainer.n_procs,
-        lambda val: setattr(cfg.trainer, "n_procs", val))
+        lambda val: setattr(cfg.trainer, "n_procs", val),
+        "Parallel workers for self-play")
 
     # Evaluator
     add("eval_n_games", cfg.evaluator.n_games,
-        lambda val: setattr(cfg.evaluator, "n_games", val))
+        lambda val: setattr(cfg.evaluator, "n_games", val),
+        "Games to pit new vs old agent")
     add("eval_n_procs", cfg.evaluator.n_procs,
-        lambda val: setattr(cfg.evaluator, "n_procs", val))
+        lambda val: setattr(cfg.evaluator, "n_procs", val),
+        "Parallel workers for evaluation")
 
     # Run
     add("n_iterations", cfg.run.n_iterations,
-        lambda val: setattr(cfg.run, "n_iterations", val))
+        lambda val: setattr(cfg.run, "n_iterations", val),
+        "Total training iterations")
     add("accept_threshold", cfg.run.accept_threshold,
-        lambda val: setattr(cfg.run, "accept_threshold", val))
+        lambda val: setattr(cfg.run, "accept_threshold", val),
+        "Win rate to accept new network")
     add("plot_every", cfg.run.plot_every,
-        lambda val: setattr(cfg.run, "plot_every", val))
+        lambda val: setattr(cfg.run, "plot_every", val),
+        "Plot metrics every N iterations")
 
     return params
 
 
 def display_config(cfg):
-    """Print all hyperparameters as a numbered table."""
+    """Print all hyperparameters as a numbered table with descriptions."""
     params = _build_param_table(cfg)
 
     sections = [
@@ -104,8 +123,11 @@ def display_config(cfg):
     print("\n=== BitString Config ===\n")
     for section_name, section_params in sections:
         print(f"  {section_name}:")
-        for num, label, value, _ in section_params:
-            print(f"    {num:>2}) {label:<22} = {value}")
+        for num, label, value, _, desc in section_params:
+            line = f"    {num:>2}) {label:<22} = {str(value):<10}"
+            if desc:
+                line += f"  # {desc}"
+            print(line)
         print()
 
 
@@ -138,7 +160,7 @@ def interactive_edit(cfg):
             print(f"  No parameter with number {num}.")
             continue
 
-        _, label, current, setter = param_map[num]
+        _, label, current, setter, _ = param_map[num]
         raw = input(f"  New value for {label} ({type(current).__name__}) [{current}]: ").strip()
         if raw == "":
             continue
@@ -169,10 +191,13 @@ def setup_experiment_dir(cfg):
                               identify runs at a glance without opening config files.
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    n_sites = cfg.game.kwargs.get("n_sites", 0)
+    game_type = "bitflip" if cfg.game.kwargs.get("bit_flip", True) else "bitstring"
+    reward_mode = "sparse" if cfg.game.kwargs.get("sparse_reward", True) else "dense"
     sim = cfg.agent.mcts_params.get("n_simulations", 0)
     games = cfg.trainer.n_games_per_train
     iters = cfg.run.n_iterations
-    dirname = f"{timestamp}_sim{sim}_games{games}_iter{iters}"
+    dirname = f"{timestamp}_{game_type}{n_sites}_{reward_mode}_mcts{sim}_games{games}_iter{iters}"
 
     exp_dir = Path("experiments") / "bitstring" / dirname
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -233,7 +258,7 @@ def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats):
 
 
 def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats):
-    """Rename the plot file to include final stats in the filename."""
+    """Rename the plot file to include game info and final stats in the filename."""
     plot_path = Path(cfg.run.plot_path)
     if not plot_path.exists():
         return str(plot_path)
@@ -244,9 +269,12 @@ def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats):
     loss = train_recs[-1].get("train_loss", 0) if train_recs else 0
     new_mean = eval_recs[-1].get("new_rewards_mean", 0) if eval_recs else 0
 
+    n_sites = cfg.game.kwargs.get("n_sites", 0)
+    game_type = "bitflip" if cfg.game.kwargs.get("bit_flip", True) else "bitstring"
+    reward_mode = "sparse" if cfg.game.kwargs.get("sparse_reward", True) else "dense"
     score_str = f"reward{new_mean:.2f}".replace(".", "p")
     loss_str = f"loss{loss:.2f}".replace(".", "p")
-    new_name = plot_path.with_name(f"training_metrics_{score_str}_{loss_str}.png")
+    new_name = plot_path.with_name(f"metrics_{game_type}{n_sites}_{reward_mode}_{score_str}_{loss_str}.png")
 
     plot_path.rename(new_name)
     return str(new_name)
@@ -282,7 +310,7 @@ def main():
         print_iteration_header(i + 1, cfg.run.n_iterations)
 
         old_agent = copy.deepcopy(trainer.agent)
-        trainer.train_multiple(n_iterations=1)
+        trainer.train_iteration()
         new_agent = copy.deepcopy(trainer.agent)
         score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
 
@@ -300,6 +328,10 @@ def main():
         #     trainer.net = old_agent.net
         #     agent.net = old_agent.net
 
+        # Save training logs after each iteration
+        trainer.statistics_manager.save_jsonl(str(exp_dir / "train_stats.jsonl"))
+        evaluator.statistics_manager.save_jsonl(str(exp_dir / "eval_stats.jsonl"))
+
         if i % cfg.run.plot_every == 0:
             plot_training_metrics(
                 trainer.statistics_manager,
@@ -315,8 +347,10 @@ def main():
     )
     final_plot = rename_plot_with_stats(cfg, trainer.statistics_manager, evaluator.statistics_manager)
     print(f"\nTraining complete. Results saved to: {exp_dir}/")
-    print(f"  Config:  {exp_dir / 'config.json'}")
-    print(f"  Plot:    {final_plot}")
+    print(f"  Config:     {exp_dir / 'config.json'}")
+    print(f"  Plot:       {final_plot}")
+    print(f"  Train log:  {exp_dir / 'train_stats.jsonl'}")
+    print(f"  Eval log:   {exp_dir / 'eval_stats.jsonl'}")
 
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None):

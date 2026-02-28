@@ -32,7 +32,7 @@ class BitStringConfig(MetaConfig):
             kwargs={
                 "n_sites": 10,
                 "bit_flip": True,
-                "sparse_reward": True,
+                "sparse_reward": False,
             }
         )
         self.net = NetConfig(
@@ -41,7 +41,7 @@ class BitStringConfig(MetaConfig):
         )
         self.agent = AgentConfig(
             mcts_params={
-                "n_simulations": 120,
+                "n_simulations": 20,
                 "temperature": 1.0,
                 "c_exploration": 1.5,
                 "dirichlet_alpha": 0.3,
@@ -56,7 +56,7 @@ class BitStringConfig(MetaConfig):
             }
         )
         self.trainer = TrainerConfig(
-            n_games_per_train=100,
+            n_games_per_train=40,
             n_past_iterations_to_train=5,
             n_procs=8,
             checkpoint_dir="checkpoints",
@@ -68,7 +68,7 @@ class BitStringConfig(MetaConfig):
         self.run = RunConfig(
             n_iterations=10,
             accept_threshold=0.55,
-            plot_every=5,
+            plot_every=3,
             plot_path="bitstring_training_metrics.png",
         )
 

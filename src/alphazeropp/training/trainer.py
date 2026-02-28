@@ -114,9 +114,9 @@ class Trainer:
         # Flatten list of lists into a single training set.
         flat_examples_over_iteration = list(itertools.chain.from_iterable(self.all_training_examples))
         flat_examples = list(itertools.chain.from_iterable(flat_examples_over_iteration))
-        logger.info(f"total examples from recent iterations: {len(flat_examples)}")
-        logger.info(f"Training examples: {[len(x) for x in self.all_training_examples]}")
-        logger.info(f"Total examples: {len(flat_examples)}, Total value: {sum(x[2] for x in flat_examples):.2f}")
+        logger.info(f"Training examples: {len(flat_examples)} total from {len(self.all_training_examples)} recent iterations")
+        logger.debug(f"Examples per iteration: {[len(x) for x in self.all_training_examples]}")
+        logger.debug(f"Total value: {sum(x[2] for x in flat_examples):.2f}")
         
         return flat_examples
     
@@ -127,7 +127,6 @@ class Trainer:
         Args:
             flat_examples: Flattened list of (state, (policy, reward)) tuples
         """
-        logger.info(f"Training on {len(flat_examples)} examples...")
         start_time = time.time()
         
         _, train_batch_losses, train_losses, policy_losses, value_losses = self.net.train(flat_examples)
@@ -146,7 +145,6 @@ class Trainer:
         """
         Run a single training iteration: collect examples and train.
         """
-        logger.info("Starting training iteration...")
         start_time = time.time()
         
         # Step 1: Collect training examples
@@ -163,7 +161,7 @@ class Trainer:
         self._train_network(flat_examples)
         
         elapsed = time.time() - start_time
-        logger.info(f"Training iteration completed in {elapsed:.2f} seconds")
+        logger.debug(f"Training iteration completed in {elapsed:.2f} seconds")
     
     def train_multiple(self, n_iterations: int, start_at: int = 0, 
                       checkpoint_every: Optional[int] = None):
