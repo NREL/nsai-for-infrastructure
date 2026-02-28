@@ -1,5 +1,7 @@
 from typing import Any, Callable
 
+import logging
+
 import numpy as np
 
 from alphazeropp.core.game import Game
@@ -12,6 +14,8 @@ It is responsible for playing the game using the policy and value network, and c
 Other than that, the agent is not doing anything else, meaning that we have other classes to handle training, checkpointing, multithreading, etc. 
 This is to keep the agent class focused on its core responsibility of playing the game and collecting experience.
 """
+
+logger = logging.getLogger(__name__)
 
 class Agent:
     # Constants
@@ -58,9 +62,10 @@ class Agent:
             self.rngs[rng_name] = np.random.default_rng(seed)
         self.random_seeds = random_seeds
         if all(rng_name in random_seeds for rng_name in self.RNG_NAMES):
-            print(f"RNG seeds are fully specified")
+            logger.info("RNG seeds are fully specified")
         else:
-            print(f"RNG seeds are not fully specified, using nondeterministic seeds for: {', '.join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds)}")
+            logger.info("RNG seeds are not fully specified, using nondeterministic seeds for: %s",
+                        ", ".join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds))
             
             
     def _randseed(self, rng_name: str) -> int:

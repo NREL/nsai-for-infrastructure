@@ -103,15 +103,15 @@ class Evaluator:
         }
         self.statistics_manager.record(statistics)
 
-        logger.info("New agent rewards: %s", np.array2string(new_rewards, precision=3, separator=", "))
-        logger.info("Old agent rewards: %s", np.array2string(old_rewards, precision=3, separator=", "))
+        logger.debug("New agent rewards: %s", np.array2string(new_rewards, precision=3, separator=", "))
+        logger.debug("Old agent rewards: %s", np.array2string(old_rewards, precision=3, separator=", "))
         
         wins = np.sum(new_rewards > old_rewards)
         ties = np.sum(np.isclose(new_rewards, old_rewards))
         losses = np.sum(new_rewards < old_rewards)
         score = (wins + ties / 2) / self.n_games
 
-        logger.info(
+        logger.debug(
             "Eval done in %.2fs: new wins=%d, ties=%d, losses=%d, score=%.2f%%",
             time.time() - start_time,
             wins,

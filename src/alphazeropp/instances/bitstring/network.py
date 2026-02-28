@@ -1,4 +1,7 @@
 import logging
+
+logger = logging.getLogger(__name__)
+
 from alphazeropp.core.policy_value_net import TorchPolicyValueNet, PolicyValueNetModel
 
 from alphazeropp.utils import get_device
@@ -30,7 +33,7 @@ class BitStringPolicyValueNet(TorchPolicyValueNet):
         super().__init__(model)
         self.training_params = self.default_training_params | training_params
         self.DEVICE = get_device() if device is None else device
-        print(f"Neural network training will occur on device '{self.DEVICE}'")
+        logger.info(f"Neural network training will occur on device '{self.DEVICE}'")
         
     def train(self, examples, needs_reshape=True, print_all_epochs=False):
         model = self.model

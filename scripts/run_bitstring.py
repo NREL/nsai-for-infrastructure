@@ -36,9 +36,9 @@ def _build_param_table(cfg):
     params = []
     n = 1
 
-    def add(label, value, setter, desc=""):
+    def add(label, value, setter, desc="", choices=None):
         nonlocal n
-        params.append((n, label, value, setter, desc))
+        params.append((n, label, value, setter, desc, choices))
         n += 1
 
     # Game
@@ -46,14 +46,28 @@ def _build_param_table(cfg):
         cfg.game.kwargs["n_sites"] = val
         cfg.net.kwargs["n_sites"] = val
 
+    def _set_sparse_reward(val):
+        cfg.game.kwargs["sparse_reward"] = val
+        if val:  # Reset fitness_fn when switching to sparse
+            cfg.game.kwargs["fitness_fn"] = None
+
     add("n_sites", cfg.game.kwargs["n_sites"], _set_n_sites,
         "Length of the binary vector")
     add("bit_flip", cfg.game.kwargs["bit_flip"],
         lambda val: cfg.game.kwargs.__setitem__("bit_flip", val),
         "Actions flip bits (vs set bits)")
     add("sparse_reward", cfg.game.kwargs["sparse_reward"],
-        lambda val: cfg.game.kwargs.__setitem__("sparse_reward", val),
-        "Reward only at episode end")
+        _set_sparse_reward, "Reward only at episode end")
+
+    if not cfg.game.kwargs.get("sparse_reward", False):
+        add("fitness_fn", cfg.game.kwargs.get("fitness_fn", None),
+            lambda val: cfg.game.kwargs.__setitem__("fitness_fn", val),
+            "0:None 1:leading_ones 2:binval",
+            choices=[None, "leading_ones", "binval"])
+        if cfg.game.kwargs.get("fitness_fn") is not None:
+            add("reward_mode", cfg.game.kwargs.get("reward_mode", "dense_potential"),
+                lambda val: cfg.game.kwargs.__setitem__("reward_mode", val),
+                "dense_potential or sparse_pm1")
 
     # MCTS
     descs = {
@@ -112,7 +126,7 @@ def display_config(cfg):
     params = _build_param_table(cfg)
 
     sections = [
-        ("Game",      [p for p in params if p[1] in ("n_sites", "bit_flip", "sparse_reward")]),
+        ("Game",      [p for p in params if p[1] in ("n_sites", "bit_flip", "sparse_reward", "fitness_fn", "reward_mode")]),
         ("MCTS",      [p for p in params if p[1] in ("n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon")]),
         ("Agent",     [p for p in params if p[1] in ("reward_discount",)]),
         ("Trainer",   [p for p in params if p[1] in ("n_games_per_train", "n_past_iters", "n_procs")]),
@@ -123,7 +137,7 @@ def display_config(cfg):
     print("\n=== BitString Config ===\n")
     for section_name, section_params in sections:
         print(f"  {section_name}:")
-        for num, label, value, _, desc in section_params:
+        for num, label, value, _, desc, *_ in section_params:
             line = f"    {num:>2}) {label:<22} = {str(value):<10}"
             if desc:
                 line += f"  # {desc}"
@@ -136,6 +150,9 @@ def _parse_value(raw, current_value):
     t = type(current_value)
     if t is bool:
         return raw.strip().lower() in ("true", "1", "yes")
+    if current_value is None:
+        # For None-typed fields (like fitness_fn): "None"/"none" → None, else string
+        return None if raw.strip().lower() in ("none", "") else raw.strip()
     return t(raw)
 
 
@@ -160,17 +177,34 @@ def interactive_edit(cfg):
             print(f"  No parameter with number {num}.")
             continue
 
-        _, label, current, setter, _ = param_map[num]
-        raw = input(f"  New value for {label} ({type(current).__name__}) [{current}]: ").strip()
-        if raw == "":
-            continue
+        _, label, current, setter, _, choices = param_map[num]
 
-        try:
-            new_val = _parse_value(raw, current)
-            setter(new_val)
-            print(f"  Updated: {label} = {new_val}")
-        except (ValueError, TypeError) as e:
-            print(f"  Invalid value: {e}")
+        if choices is not None:
+            print(f"  {label} options:")
+            for i, c in enumerate(choices):
+                print(f"    {i}) {c}")
+            raw = input(f"  Select [0-{len(choices)-1}]: ").strip()
+            if raw == "":
+                continue
+            try:
+                idx = int(raw)
+                if 0 <= idx < len(choices):
+                    setter(choices[idx])
+                    print(f"  Updated: {label} = {choices[idx]}")
+                else:
+                    print(f"  Invalid selection: {idx}")
+            except ValueError:
+                print(f"  Invalid input: '{raw}'. Enter a number.")
+        else:
+            raw = input(f"  New value for {label} ({type(current).__name__}) [{current}]: ").strip()
+            if raw == "":
+                continue
+            try:
+                new_val = _parse_value(raw, current)
+                setter(new_val)
+                print(f"  Updated: {label} = {new_val}")
+            except (ValueError, TypeError) as e:
+                print(f"  Invalid value: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -194,10 +228,11 @@ def setup_experiment_dir(cfg):
     n_sites = cfg.game.kwargs.get("n_sites", 0)
     game_type = "bitflip" if cfg.game.kwargs.get("bit_flip", True) else "bitstring"
     reward_mode = "sparse" if cfg.game.kwargs.get("sparse_reward", True) else "dense"
+    fitness = cfg.game.kwargs.get("fitness_fn") or "none"
     sim = cfg.agent.mcts_params.get("n_simulations", 0)
     games = cfg.trainer.n_games_per_train
     iters = cfg.run.n_iterations
-    dirname = f"{timestamp}_{game_type}{n_sites}_{reward_mode}_mcts{sim}_games{games}_iter{iters}"
+    dirname = f"{timestamp}_{game_type}{n_sites}_{reward_mode}_{fitness}_mcts{sim}_games{games}_iter{iters}"
 
     exp_dir = Path("experiments") / "bitstring" / dirname
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -215,10 +250,12 @@ def setup_experiment_dir(cfg):
 def print_banner(cfg, exp_dir):
     """Print startup banner with experiment info and output legend."""
     n_sites = cfg.game.kwargs.get("n_sites", "?")
+    fitness = cfg.game.kwargs.get("fitness_fn") or "default (±1/N)"
     print()
     print("=" * 80)
     print("  BitString AlphaZero Training")
     print(f"  Goal: Learn to flip all bits to 1. State is a binary vector of length {n_sites}.")
+    print(f"  Fitness function: {fitness}")
     print(f"  Experiment dir: {exp_dir}/")
     print()
     print("  Output legend:")
@@ -272,9 +309,10 @@ def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats):
     n_sites = cfg.game.kwargs.get("n_sites", 0)
     game_type = "bitflip" if cfg.game.kwargs.get("bit_flip", True) else "bitstring"
     reward_mode = "sparse" if cfg.game.kwargs.get("sparse_reward", True) else "dense"
+    fitness = cfg.game.kwargs.get("fitness_fn") or "none"
     score_str = f"reward{new_mean:.2f}".replace(".", "p")
     loss_str = f"loss{loss:.2f}".replace(".", "p")
-    new_name = plot_path.with_name(f"metrics_{game_type}{n_sites}_{reward_mode}_{score_str}_{loss_str}.png")
+    new_name = plot_path.with_name(f"metrics_{game_type}{n_sites}_{reward_mode}_{fitness}_{score_str}_{loss_str}.png")
 
     plot_path.rename(new_name)
     return str(new_name)
@@ -303,6 +341,10 @@ def main():
     game, net, agent, trainer, evaluator = cfg.build()
 
     print_banner(cfg, exp_dir)
+
+    n_sites = cfg.game.kwargs["n_sites"]
+    n_ones = 2  # Hardcoded in BitStringGym.__init__
+    optimal_reward = (n_sites - n_ones) / n_sites
 
     breakpoint()
     # Training loop
@@ -337,6 +379,7 @@ def main():
                 trainer.statistics_manager,
                 evaluator.statistics_manager,
                 save_path=cfg.run.plot_path,
+                optimal_reward=optimal_reward,
             )
 
     # Final plot with stats in filename
@@ -344,6 +387,7 @@ def main():
         trainer.statistics_manager,
         evaluator.statistics_manager,
         save_path=cfg.run.plot_path,
+        optimal_reward=optimal_reward,
     )
     final_plot = rename_plot_with_stats(cfg, trainer.statistics_manager, evaluator.statistics_manager)
     print(f"\nTraining complete. Results saved to: {exp_dir}/")
@@ -353,7 +397,7 @@ def main():
     print(f"  Eval log:   {exp_dir / 'eval_stats.jsonl'}")
 
 
-def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None):
+def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None, optimal_reward=None):
     """
     Plot training metrics.
 
@@ -390,13 +434,19 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
 
     # Plot 1: Eval reward mean with std band
     ax1 = axes[0, 0]
+    if optimal_reward is not None:
+        ax1.axhline(y=optimal_reward, color='green', linestyle='--', linewidth=1.5, label=f'Optimal ({optimal_reward:.3f})')
     if 'new_rewards_mean' in df.columns:
         ax1.plot(df['iteration'], df['new_rewards_mean'], 'b-', linewidth=2, label='New Reward Mean')
         if 'new_rewards_std' in df.columns:
+            std_upper = df['new_rewards_mean'] + df['new_rewards_std']
+            std_lower = df['new_rewards_mean'] - df['new_rewards_std']
+            if optimal_reward is not None:
+                std_upper = np.minimum(std_upper, optimal_reward)
             ax1.fill_between(
                 df['iteration'],
-                df['new_rewards_mean'] - df['new_rewards_std'],
-                df['new_rewards_mean'] + df['new_rewards_std'],
+                std_lower,
+                std_upper,
                 alpha=0.3, color='blue', label='+-1 Std'
             )
     if 'old_rewards_mean' in df.columns:

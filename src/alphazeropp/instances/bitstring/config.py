@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from alphazeropp.instances.bitstring.game import BitStringGame
+from alphazeropp.instances.bitstring.game import BitStringGame, BitStringGym
 from alphazeropp.instances.bitstring.network import BitStringPolicyValueNet
 from alphazeropp.core.agent import Agent
 from alphazeropp.training.trainer import Trainer
@@ -33,6 +33,8 @@ class BitStringConfig(MetaConfig):
                 "n_sites": 10,
                 "bit_flip": True,
                 "sparse_reward": False,
+                "fitness_fn": None,
+                "reward_mode": "dense_potential",
             }
         )
         self.net = NetConfig(
@@ -75,7 +77,28 @@ class BitStringConfig(MetaConfig):
     def build(self):
         """Build BitString game, network, agent, trainer, and evaluator."""
 
-        game = BitStringGame(**self.game.kwargs)
+        # Separate fitness config from BitStringGym kwargs
+        game_kwargs = dict(self.game.kwargs)
+        fitness_fn_name = game_kwargs.pop("fitness_fn", None)
+        reward_mode = game_kwargs.pop("reward_mode", "dense_potential")
+
+        if fitness_fn_name is not None and game_kwargs.get("sparse_reward", False):
+            raise ValueError(
+                "sparse_reward=True is incompatible with fitness_fn. "
+                "Shaped rewards require sparse_reward=False (dense mode) "
+                "so that max_steps=2*N gives the agent room to explore."
+            )
+
+        if fitness_fn_name is not None:
+            from alphazeropp.instances.bitstring.potentials import POTENTIAL_REGISTRY
+            from alphazeropp.instances.bitstring.shaped_env import ShapedBitStringGym
+            base_env = BitStringGym(**game_kwargs)
+            shaped_env = ShapedBitStringGym(
+                base_env, POTENTIAL_REGISTRY[fitness_fn_name], reward_mode
+            )
+            game = BitStringGame(env=shaped_env)
+        else:
+            game = BitStringGame(**game_kwargs)
         net = BitStringPolicyValueNet(**self.net.kwargs)
         agent = Agent(
             game=game,

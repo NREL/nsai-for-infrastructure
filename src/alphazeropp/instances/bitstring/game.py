@@ -70,8 +70,9 @@ class BitStringGym(gym.Env):
         return self.state.copy(), {}
 
 class BitStringGame(EnvGame):
-    def __init__(self, **kwargs):
-        env = BitStringGym(**kwargs)
+    def __init__(self, env=None, **kwargs):
+        if env is None:
+            env = BitStringGym(**kwargs)
         super().__init__(env)
         self.action_mask = np.ones(env.n_sites, dtype=bool)  # All actions are always available
     

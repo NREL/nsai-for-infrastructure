@@ -53,8 +53,8 @@ class Trainer:
         self.checkpoint_manager = CheckpointManager(checkpoint_dir)
         self.statistics_manager = StatisticsManager(self.run_start_time)
         
-        logger.info(f"Trainer initialized: n_games_per_train={n_games_per_train}, "
-                   f"n_past_iterations_to_train={n_past_iterations_to_train}")
+        logger.debug(f"Trainer initialized: n_games_per_train={n_games_per_train}, "
+                    f"n_past_iterations_to_train={n_past_iterations_to_train}")
         
     def push_multiprocessing(self):
         ### It looks like we don't need to do anything here yet
@@ -72,7 +72,7 @@ class Trainer:
         Returns:
             List of training example sets
         """
-        logger.info(f"Collecting {self.n_games_per_train} training games...")
+        logger.debug(f"Collecting {self.n_games_per_train} training games...")
         
         # Before we start multiprocessing, we need to push the multiprocessing state to all relevant objects (like the agent and the game) to make sure they are in a consistent state across processes. After multiprocessing is done, we need to pop the multiprocessing state to restore the original state.
         mp_manager = MultiprocessingManager(self.agent.net, self)
@@ -114,7 +114,7 @@ class Trainer:
         # Flatten list of lists into a single training set.
         flat_examples_over_iteration = list(itertools.chain.from_iterable(self.all_training_examples))
         flat_examples = list(itertools.chain.from_iterable(flat_examples_over_iteration))
-        logger.info(f"Training examples: {len(flat_examples)} total from {len(self.all_training_examples)} recent iterations")
+        logger.debug(f"Training examples: {len(flat_examples)} total from {len(self.all_training_examples)} recent iterations")
         logger.debug(f"Examples per iteration: {[len(x) for x in self.all_training_examples]}")
         logger.debug(f"Total value: {sum(x[2] for x in flat_examples):.2f}")
         
@@ -132,7 +132,7 @@ class Trainer:
         _, train_batch_losses, train_losses, policy_losses, value_losses = self.net.train(flat_examples)
         
         elapsed = time.time() - start_time
-        logger.info(f"Training completed in {elapsed:.2f} seconds")
+        logger.debug(f"Training completed in {elapsed:.2f} seconds")
         statistics = {
             "train_loss": np.mean(train_losses),
             "train_loss_policy": np.mean(policy_losses),
