@@ -7,10 +7,11 @@ import numpy as np
 from alphazeropp.instances import BitStringConfig
 
 import copy
-
 import torch
-
 import logging
+from datetime import datetime
+from pathlib import Path
+
 
 def models_equal(m1, m2):
     sd1 = m1.state_dict()
@@ -25,21 +26,271 @@ def models_equal(m1, m2):
 
     return True
 
+
+# ---------------------------------------------------------------------------
+# Config display & interactive editing
+# ---------------------------------------------------------------------------
+
+def _build_param_table(cfg):
+    """Build a list of (number, label, value, setter) for all editable params."""
+    params = []
+    n = 1
+
+    def add(label, value, setter):
+        nonlocal n
+        params.append((n, label, value, setter))
+        n += 1
+
+    # Game
+    def _set_n_sites(val):
+        cfg.game.kwargs["n_sites"] = val
+        cfg.net.kwargs["n_sites"] = val
+
+    for k in ["n_sites", "bit_flip", "sparse_reward"]:
+        v = cfg.game.kwargs[k]
+        if k == "n_sites":
+            add(k, v, _set_n_sites)
+        else:
+            add(k, v, lambda val, _k=k: cfg.game.kwargs.__setitem__(_k, val))
+
+    # MCTS
+    for k in ["n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon"]:
+        if k in cfg.agent.mcts_params:
+            v = cfg.agent.mcts_params[k]
+            add(k, v, lambda val, _k=k: cfg.agent.mcts_params.__setitem__(_k, val))
+
+    # Agent
+    add("reward_discount", cfg.agent.reward_discount,
+        lambda val: setattr(cfg.agent, "reward_discount", val))
+
+    # Trainer
+    add("n_games_per_train", cfg.trainer.n_games_per_train,
+        lambda val: setattr(cfg.trainer, "n_games_per_train", val))
+    add("n_past_iters", cfg.trainer.n_past_iterations_to_train,
+        lambda val: setattr(cfg.trainer, "n_past_iterations_to_train", val))
+    add("n_procs", cfg.trainer.n_procs,
+        lambda val: setattr(cfg.trainer, "n_procs", val))
+
+    # Evaluator
+    add("eval_n_games", cfg.evaluator.n_games,
+        lambda val: setattr(cfg.evaluator, "n_games", val))
+    add("eval_n_procs", cfg.evaluator.n_procs,
+        lambda val: setattr(cfg.evaluator, "n_procs", val))
+
+    # Run
+    add("n_iterations", cfg.run.n_iterations,
+        lambda val: setattr(cfg.run, "n_iterations", val))
+    add("accept_threshold", cfg.run.accept_threshold,
+        lambda val: setattr(cfg.run, "accept_threshold", val))
+    add("plot_every", cfg.run.plot_every,
+        lambda val: setattr(cfg.run, "plot_every", val))
+
+    return params
+
+
+def display_config(cfg):
+    """Print all hyperparameters as a numbered table."""
+    params = _build_param_table(cfg)
+
+    sections = [
+        ("Game",      [p for p in params if p[1] in ("n_sites", "bit_flip", "sparse_reward")]),
+        ("MCTS",      [p for p in params if p[1] in ("n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon")]),
+        ("Agent",     [p for p in params if p[1] in ("reward_discount",)]),
+        ("Trainer",   [p for p in params if p[1] in ("n_games_per_train", "n_past_iters", "n_procs")]),
+        ("Evaluator", [p for p in params if p[1] in ("eval_n_games", "eval_n_procs")]),
+        ("Run",       [p for p in params if p[1] in ("n_iterations", "accept_threshold", "plot_every")]),
+    ]
+
+    print("\n=== BitString Config ===\n")
+    for section_name, section_params in sections:
+        print(f"  {section_name}:")
+        for num, label, value, _ in section_params:
+            print(f"    {num:>2}) {label:<22} = {value}")
+        print()
+
+
+def _parse_value(raw, current_value):
+    """Parse a string input to the same type as current_value."""
+    t = type(current_value)
+    if t is bool:
+        return raw.strip().lower() in ("true", "1", "yes")
+    return t(raw)
+
+
+def interactive_edit(cfg):
+    """Display config and let user edit parameters by number."""
+    while True:
+        display_config(cfg)
+        params = _build_param_table(cfg)
+        param_map = {p[0]: p for p in params}
+
+        choice = input("  Enter number to edit (or 'run' to start): ").strip()
+        if choice.lower() in ("run", "start", ""):
+            break
+
+        try:
+            num = int(choice)
+        except ValueError:
+            print(f"  Invalid input: '{choice}'. Enter a number or 'run'.")
+            continue
+
+        if num not in param_map:
+            print(f"  No parameter with number {num}.")
+            continue
+
+        _, label, current, setter = param_map[num]
+        raw = input(f"  New value for {label} ({type(current).__name__}) [{current}]: ").strip()
+        if raw == "":
+            continue
+
+        try:
+            new_val = _parse_value(raw, current)
+            setter(new_val)
+            print(f"  Updated: {label} = {new_val}")
+        except (ValueError, TypeError) as e:
+            print(f"  Invalid value: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Experiment directory
+# ---------------------------------------------------------------------------
+
+def setup_experiment_dir(cfg):
+    """
+    Create and return an experiment directory path. Updates cfg paths.
+
+    Directory layout justification:
+      experiments/          - Already in .gitignore; standard ML convention that
+                              separates transient run artifacts from source code.
+      bitstring/            - Groups by game type so future games (e.g. CartPole)
+                              get their own subdirectory.
+      YYYYMMDD_HHMMSS_.../ - Timestamp ensures uniqueness and chronological sorting.
+                              Key hyperparams (sim, games, iter) in the name let you
+                              identify runs at a glance without opening config files.
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    sim = cfg.agent.mcts_params.get("n_simulations", 0)
+    games = cfg.trainer.n_games_per_train
+    iters = cfg.run.n_iterations
+    dirname = f"{timestamp}_sim{sim}_games{games}_iter{iters}"
+
+    exp_dir = Path("experiments") / "bitstring" / dirname
+    exp_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg.trainer.checkpoint_dir = str(exp_dir / "checkpoints")
+    cfg.run.plot_path = str(exp_dir / "training_metrics.png")
+
+    return exp_dir
+
+
+# ---------------------------------------------------------------------------
+# Training output helpers
+# ---------------------------------------------------------------------------
+
+def print_banner(cfg, exp_dir):
+    """Print startup banner with experiment info and output legend."""
+    n_sites = cfg.game.kwargs.get("n_sites", "?")
+    print()
+    print("=" * 80)
+    print("  BitString AlphaZero Training")
+    print(f"  Goal: Learn to flip all bits to 1. State is a binary vector of length {n_sites}.")
+    print(f"  Experiment dir: {exp_dir}/")
+    print()
+    print("  Output legend:")
+    print("    [TRAIN]  Self-play data collection & network training")
+    print("    [EVAL]   Pitting new network vs old network")
+    print("    [ITER]   Iteration summary with key metrics")
+    print("=" * 80)
+    print()
+
+
+def print_iteration_header(i, total):
+    """Print iteration separator."""
+    header = f"--- Iteration {i}/{total} "
+    print(header + "-" * (80 - len(header)))
+
+
+def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats):
+    """Print compact one-line iteration summary."""
+    train_rec = trainer_stats.to_list()[-1] if trainer_stats.to_list() else {}
+    eval_rec = evaluator_stats.to_list()[-1] if evaluator_stats.to_list() else {}
+
+    loss = train_rec.get("train_loss", float("nan"))
+    p_loss = train_rec.get("train_loss_policy", float("nan"))
+    v_loss = train_rec.get("train_loss_value", float("nan"))
+    n_examples = train_rec.get("num_examples", 0)
+
+    new_mean = eval_rec.get("new_rewards_mean", float("nan"))
+    old_mean = eval_rec.get("old_rewards_mean", float("nan"))
+
+    print(
+        f"[ITER {i}/{total}] Score: {score*100:.1f}% "
+        f"| New reward: {new_mean:.3f} vs Old: {old_mean:.3f} "
+        f"| Loss: {loss:.4f} (P:{p_loss:.3f} V:{v_loss:.3f}) "
+        f"| Examples: {n_examples}"
+    )
+    print()
+
+
+def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats):
+    """Rename the plot file to include final stats in the filename."""
+    plot_path = Path(cfg.run.plot_path)
+    if not plot_path.exists():
+        return str(plot_path)
+
+    train_recs = trainer_stats.to_list()
+    eval_recs = evaluator_stats.to_list()
+
+    loss = train_recs[-1].get("train_loss", 0) if train_recs else 0
+    new_mean = eval_recs[-1].get("new_rewards_mean", 0) if eval_recs else 0
+
+    score_str = f"reward{new_mean:.2f}".replace(".", "p")
+    loss_str = f"loss{loss:.2f}".replace(".", "p")
+    new_name = plot_path.with_name(f"training_metrics_{score_str}_{loss_str}.png")
+
+    plot_path.rename(new_name)
+    return str(new_name)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     cfg = BitStringConfig()
     cfg.agent.random_seeds["mcts"] = 43
     cfg.agent.random_seeds["train"] = 47
     cfg.agent.random_seeds["eval"] = 23
+
+    # Interactive config editing
+    interactive_edit(cfg)
+
+    # Setup experiment directory
+    exp_dir = setup_experiment_dir(cfg)
+    cfg.save(str(exp_dir / "config.json"))
+
+    # Build objects
     game, net, agent, trainer, evaluator = cfg.build()
-    cfg.save("bitstring_config.json")
+
+    print_banner(cfg, exp_dir)
+
     breakpoint()
-    # Example usage:
+    # Training loop
     for i in range(cfg.run.n_iterations):
+        print_iteration_header(i + 1, cfg.run.n_iterations)
+
         old_agent = copy.deepcopy(trainer.agent)
         trainer.train_multiple(n_iterations=1)
         new_agent = copy.deepcopy(trainer.agent)
         score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
-        print(score)
+
+        print_iteration_summary(
+            i + 1, cfg.run.n_iterations, score,
+            trainer.statistics_manager, evaluator.statistics_manager,
+        )
+
         # if score >= cfg.run.accept_threshold:
         #     print("Keeping the new network")
         #     trainer.net = new_agent.net
@@ -50,15 +301,30 @@ def main():
         #     agent.net = old_agent.net
 
         if i % cfg.run.plot_every == 0:
-            plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path=cfg.run.plot_path)
+            plot_training_metrics(
+                trainer.statistics_manager,
+                evaluator.statistics_manager,
+                save_path=cfg.run.plot_path,
+            )
+
+    # Final plot with stats in filename
+    plot_training_metrics(
+        trainer.statistics_manager,
+        evaluator.statistics_manager,
+        save_path=cfg.run.plot_path,
+    )
+    final_plot = rename_plot_with_stats(cfg, trainer.statistics_manager, evaluator.statistics_manager)
+    print(f"\nTraining complete. Results saved to: {exp_dir}/")
+    print(f"  Config:  {exp_dir / 'config.json'}")
+    print(f"  Plot:    {final_plot}")
+
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None):
     """
-    Sub-Phase 4.2: Plot training metrics.
-    
-    Justification:
-        Visualization is essential for diagnosing training issues and comparing runs.
-        Plots eval rewards, training losses, and training set size over iterations.
+    Plot training metrics.
+
+    Visualization is essential for diagnosing training issues and comparing runs.
+    Plots eval rewards, training losses, and training set size over iterations.
     """
     try:
         import matplotlib.pyplot as plt
@@ -84,10 +350,10 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
         merged.append(row)
 
     df = pd.DataFrame(merged)
-    
+
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle("BitString AlphaZero Training Metrics", fontsize=14, fontweight='bold')
-    
+
     # Plot 1: Eval reward mean with std band
     ax1 = axes[0, 0]
     if 'new_rewards_mean' in df.columns:
@@ -97,7 +363,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
                 df['iteration'],
                 df['new_rewards_mean'] - df['new_rewards_std'],
                 df['new_rewards_mean'] + df['new_rewards_std'],
-                alpha=0.3, color='blue', label='±1 Std'
+                alpha=0.3, color='blue', label='+-1 Std'
             )
     if 'old_rewards_mean' in df.columns:
         ax1.plot(df['iteration'], df['old_rewards_mean'], 'c--', linewidth=2, label='Old Reward Mean')
@@ -107,7 +373,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
     if len(ax1.lines) > 0:
         ax1.legend()
     ax1.grid(True, alpha=0.3)
-    
+
     # Plot 2: Policy and Value Loss
     ax2 = axes[0, 1]
     has_loss = False
@@ -129,7 +395,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
         ax2.set_yscale('log')
     else:
         ax2.axis('off')
-    
+
     # Plot 3: Training Set Size or Game Length (if available)
     ax3 = axes[1, 0]
     if 'num_examples' in df.columns:
@@ -142,7 +408,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
         ax3.set_title('Average Episode Length')
     ax3.set_xlabel('Iteration')
     ax3.grid(True, alpha=0.3)
-    
+
     # Plot 4: Combined (normalized)
     ax4 = axes[1, 1]
     series_to_plot = []
@@ -164,16 +430,15 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
     if series_to_plot:
         ax4.legend()
     ax4.grid(True, alpha=0.3)
-    
+
     plt.tight_layout()
-    
+
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         print(f"[Plot] Saved to {save_path}")
-    
+
     plt.close(fig)  # Close to free memory
-    
-    
+
 
 if __name__ == "__main__":
     main()

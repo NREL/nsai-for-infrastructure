@@ -134,7 +134,8 @@ class Agent:
     
     def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
         import torch
-        torch.cuda.init() # We need to initialize CUDA in the child process before we can use the network, otherwise we may encounter issues with CUDA context initialization in multiprocessing.
+        if torch.cuda.is_available():
+            torch.cuda.init() # We need to initialize CUDA in the child process before we can use the network, otherwise we may encounter issues with CUDA context initialization in multiprocessing.
         current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
         current_game_state.reset_wrapper(seed=reset_seed)
         

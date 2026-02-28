@@ -66,7 +66,7 @@ class BitStringConfig(MetaConfig):
             n_procs=8,
         )
         self.run = RunConfig(
-            n_iterations=100,
+            n_iterations=10,
             accept_threshold=0.55,
             plot_every=5,
             plot_path="bitstring_training_metrics.png",

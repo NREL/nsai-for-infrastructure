@@ -43,7 +43,8 @@ class Evaluator:
         Play one eval game for each agent and return rewards.
         """
         import torch
-        torch.cuda.init()
+        if torch.cuda.is_available():
+            torch.cuda.init()
         base_game = new_agent.game.stash_state()
         base_game.reset_wrapper(seed=reset_seed)
         old_game = copy.deepcopy(base_game)
@@ -102,8 +103,8 @@ class Evaluator:
         }
         self.statistics_manager.record(statistics)
 
-        print("new rewards:", new_rewards)
-        print("old rewards:", old_rewards)
+        logger.info("New agent rewards: %s", np.array2string(new_rewards, precision=3, separator=", "))
+        logger.info("Old agent rewards: %s", np.array2string(old_rewards, precision=3, separator=", "))
         
         wins = np.sum(new_rewards > old_rewards)
         ties = np.sum(np.isclose(new_rewards, old_rewards))
