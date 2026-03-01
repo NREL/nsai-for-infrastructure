@@ -21,6 +21,7 @@ import json
 import sys
 import textwrap
 import time
+from datetime import datetime
 from math import comb
 from pathlib import Path
 
@@ -61,9 +62,17 @@ from alphazeropp.utils.interactive_config import (
 
 
 # ---------------------------------------------------------------------------
-# Output directory
+# Experiment directory
 # ---------------------------------------------------------------------------
-OUT_DIR = Path("results/derivation_mcts")
+
+def setup_experiment_dir(args):
+    """Create and return a timestamped experiment directory."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dirname = (f"{timestamp}_N{args.n_sites}_L{args.budget}_{args.metric}"
+               f"_mcts{args.n_simulations}_rounds{args.n_rounds}")
+    exp_dir = Path("experiments") / "derivation_mcts" / dirname
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    return exp_dir
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +505,7 @@ def generate_plots(
     cfg: GameConfig,
     leaf_eval: LeafEvaluator,
     gt_best_value: float | None,
+    exp_dir: Path,
 ):
     try:
         import matplotlib
@@ -505,35 +515,34 @@ def generate_plots(
         print("matplotlib not available, skipping plots.")
         return
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
     print("=" * 70)
     print("=== Generating Plots ===")
     print()
 
     # Plot 1: MCTS Convergence
-    _plot_convergence(round_logs, gt_best_value, plt)
+    _plot_convergence(round_logs, gt_best_value, plt, exp_dir)
 
     # Plot 2: Program Quality Distribution
     if gt_results is not None:
         _plot_quality_distribution(
-            leaf_eval, gt_results, n_sites, cfg, plt,
+            leaf_eval, gt_results, n_sites, cfg, plt, exp_dir,
         )
 
     # Plot 3: Best vs Worst Program Execution
     if best_program is not None and gt_results is not None:
         _plot_comparison(
-            best_program, gt_results, n_sites, cfg, plt,
+            best_program, gt_results, n_sites, cfg, plt, exp_dir,
         )
 
     # Plot 4: Derivation Depth Profile
-    _plot_depth_profile(round_logs, plt)
+    _plot_depth_profile(round_logs, plt, exp_dir)
 
 
 def _plot_convergence(
     round_logs: list[dict],
     gt_best_value: float | None,
     plt,
+    exp_dir: Path,
 ):
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -563,7 +572,7 @@ def _plot_convergence(
     ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
 
-    path = str(OUT_DIR / "convergence.png")
+    path = str(exp_dir / "convergence.png")
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
@@ -576,6 +585,7 @@ def _plot_quality_distribution(
     n_sites: int,
     cfg: GameConfig,
     plt,
+    exp_dir: Path,
 ):
     from collections import Counter
 
@@ -613,7 +623,7 @@ def _plot_quality_distribution(
     ax.set_title("Program Quality Distribution: MCTS vs Full Enumeration")
     ax.legend()
 
-    path = str(OUT_DIR / "quality_distribution.png")
+    path = str(exp_dir / "quality_distribution.png")
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
@@ -626,6 +636,7 @@ def _plot_comparison(
     n_sites: int,
     cfg: GameConfig,
     plt,
+    exp_dir: Path,
 ):
     from matplotlib.colors import ListedColormap
     import matplotlib.patches as mpatches
@@ -701,13 +712,13 @@ def _plot_comparison(
     fig.suptitle(f"Policy Comparison on {init_str} (N={n_sites})",
                  fontsize=11, fontweight="bold")
     plt.tight_layout(rect=[0, 0.05, 1, 0.93])
-    path = str(OUT_DIR / "comparison.png")
+    path = str(exp_dir / "comparison.png")
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"  Saved: {path}")
 
 
-def _plot_depth_profile(round_logs: list[dict], plt):
+def _plot_depth_profile(round_logs: list[dict], plt, exp_dir: Path):
     from collections import defaultdict
 
     depth_data = defaultdict(list)
@@ -738,11 +749,24 @@ def _plot_depth_profile(round_logs: list[dict], plt):
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
 
-    path = str(OUT_DIR / "depth_profile.png")
+    path = str(exp_dir / "depth_profile.png")
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     plt.close()
     print(f"  Saved: {path}")
+
+
+def rename_plots_with_stats(exp_dir: Path, args, best_metrics: dict | None):
+    """Rename plot files to include final metrics in the filename."""
+    sr = best_metrics.get("solve_rate", 0) if best_metrics else 0
+    ar = best_metrics.get("avg_reward", 0) if best_metrics else 0
+    sr_str = f"sr{sr:.0%}".replace("%", "pct")
+    reward_str = f"reward{ar:.2f}".replace(".", "p")
+    suffix = f"_N{args.n_sites}_L{args.budget}_{args.metric}_{sr_str}_{reward_str}"
+
+    for png in list(exp_dir.glob("*.png")):
+        new_name = png.with_name(f"{png.stem}{suffix}.png")
+        png.rename(new_name)
 
 
 # ---------------------------------------------------------------------------
@@ -838,7 +862,7 @@ def main():
 
     # Setup
     np.random.seed(args.seed)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    exp_dir = setup_experiment_dir(args)
 
     cfg = GameConfig(
         bit_flip=True,
@@ -906,13 +930,28 @@ def main():
     generate_plots(
         round_logs, gt_results,
         best_program, args.n_sites, args.budget, cfg, leaf_eval,
-        gt_best_value,
+        gt_best_value, exp_dir,
     )
 
+    # Rename plots with final stats
+    best_metrics = (leaf_eval.get_all_metrics(best_program)
+                    if best_program is not None else None)
+    rename_plots_with_stats(exp_dir, args, best_metrics)
+
     # Save JSONL
-    jsonl_path = OUT_DIR / "run_log.jsonl"
+    jsonl_path = exp_dir / "run_log.jsonl"
     stats_mgr.save_jsonl(jsonl_path, append=False)
-    print(f"\nRun log saved: {jsonl_path}")
+
+    # Final summary
+    print(f"\nSearch complete. Results saved to: {exp_dir}/")
+    print(f"  Run log:  {jsonl_path}")
+    for png in sorted(exp_dir.glob("*.png")):
+        print(f"  Plot:     {png}")
+    if best_program is not None:
+        print(f"\n  Best program: {_oneline(best_program)}")
+        sr = best_metrics.get("solve_rate", 0)
+        ar = best_metrics.get("avg_reward", 0)
+        print(f"  Solve rate: {sr:.1%}, Avg reward: {ar:+.4f}")
 
 
 if __name__ == "__main__":

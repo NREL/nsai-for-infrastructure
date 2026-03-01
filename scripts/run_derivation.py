@@ -5,6 +5,7 @@ use_deterministic_cuda()
 import copy
 import json
 import logging
+from math import comb
 from alphazeropp.training.gated_trainer import GatedTrainer
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,9 @@ def _build_sections(cfg):
          "AST node budget (program size)", None),
         ("n_ones", cfg.game.kwargs["n_ones"], dict_setter(cfg.game.kwargs, "n_ones"),
          "Number of 1s in initial states", None),
+        ("n_frozen_states", cfg.game.kwargs.get("n_frozen_states", 1),
+         dict_setter(cfg.game.kwargs, "n_frozen_states"),
+         "Frozen initial states for evaluation", None),
         ("potential", cfg.game.kwargs["potential_name"],
          dict_setter(cfg.game.kwargs, "potential_name"),
          "Reward shaping function", list(POTENTIAL_REGISTRY.keys())),
@@ -125,7 +129,7 @@ def _build_sections(cfg):
 
     all_params = build_param_list(params)
 
-    problem_labels = {"n_sites", "budget", "n_ones", "potential"}
+    problem_labels = {"n_sites", "budget", "n_ones", "n_frozen_states", "potential"}
     eval_labels = {"metric", "penalty_lambda", "blend_alpha"}
     mcts_labels = {"n_simulations", "temperature", "c_exploration",
                    "dirichlet_alpha", "dirichlet_epsilon"}
@@ -192,11 +196,17 @@ def print_banner(cfg, exp_dir):
     print(f"  Goal: Learn to synthesize BitString policies via grammar derivation.")
     print(f"  Problem: N={n_sites} bits, budget L={budget}, "
           f"{total_programs} possible programs")
+    n_frozen = cfg.game.kwargs.get("n_frozen_states", 1)
+    n_total = comb(n_sites, n_ones)
+    optimal_reward = (n_sites - n_ones) / n_sites
+
     print(f"  Action space: Discrete({max_prods}) "
           f"(max productions at any derivation step)")
-    print(f"  Initial states: C({n_sites},{n_ones}) = "
-          f"{total_programs} frozen states with {n_ones} ones")
+    print(f"  Frozen states: {n_frozen} of {n_total} possible "
+          f"(C({n_sites},{n_ones}) with {n_ones} ones)")
     print(f"  Leaf evaluation: {metric}")
+    print(f"  Optimal reward: {optimal_reward:.4f} = "
+          f"({n_sites}-{n_ones})/{n_sites}")
     print(f"  Experiment dir: {exp_dir}/")
     print()
     print("  Output legend:")
@@ -290,10 +300,15 @@ def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats,
     if best_program_str is not None and best_metrics is not None:
         sr = best_metrics.get("solve_rate", 0)
         ar = best_metrics.get("avg_reward", 0)
-        print(
-            f"[PROG] Best so far: solve_rate={sr:.1%}, "
-            f"avg_reward={ar:+.4f}"
-        )
+        n_episodes = best_metrics.get("n_episodes", 1)
+        if n_episodes == 1:
+            solved_str = "Solved" if sr >= 1.0 else "Not solved"
+            print(f"[PROG] Best so far: {solved_str}, avg_reward={ar:+.4f}")
+        else:
+            print(
+                f"[PROG] Best so far: solve_rate={sr:.1%}, "
+                f"avg_reward={ar:+.4f}"
+            )
         prog_display = (best_program_str if len(best_program_str) < 70
                         else best_program_str[:67] + "...")
         print(f"       {prog_display}")
@@ -336,7 +351,7 @@ def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats, best_metrics):
 # ---------------------------------------------------------------------------
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
-                          program_log, save_path=None):
+                          program_log, save_path=None, optimal_reward=None):
     """Plot training metrics with derivation-specific best-program tracking."""
     try:
         import matplotlib.pyplot as plt
@@ -374,6 +389,9 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
 
     # Plot 1: Eval reward mean with std band
     ax1 = axes[0, 0]
+    if optimal_reward is not None:
+        ax1.axhline(y=optimal_reward, color="green", linestyle="--",
+                     linewidth=1.5, label=f"Optimal ({optimal_reward:.3f})")
     if "new_rewards_mean" in df.columns:
         ax1.plot(df["iteration"], df["new_rewards_mean"],
                  "b-", linewidth=2, label="New Reward Mean")
@@ -477,6 +495,10 @@ def main():
     print_banner(cfg, exp_dir)
     print_architecture(cfg)
 
+    n_sites = cfg.game.kwargs["n_sites"]
+    n_ones = cfg.game.kwargs["n_ones"]
+    optimal_reward = (n_sites - n_ones) / n_sites
+
     # Access LeafEvaluator for program tracking (works in sequential mode)
     leaf_eval = game.leaf_evaluator
 
@@ -529,6 +551,7 @@ def main():
                 evaluator.statistics_manager,
                 program_log,
                 save_path=cfg.run.plot_path,
+                optimal_reward=optimal_reward,
             )
 
         # Early stopping: perfect program found
@@ -544,6 +567,7 @@ def main():
         evaluator.statistics_manager,
         program_log,
         save_path=cfg.run.plot_path,
+        optimal_reward=optimal_reward,
     )
     final_plot = rename_plot_with_stats(
         cfg, trainer.statistics_manager, evaluator.statistics_manager,
@@ -560,7 +584,12 @@ def main():
         print(f"\n  Best program: {best_program_str}")
         sr = best_program_metrics.get("solve_rate", 0)
         ar = best_program_metrics.get("avg_reward", 0)
-        print(f"  Solve rate: {sr:.1%}, Avg reward: {ar:+.4f}")
+        n_episodes = best_program_metrics.get("n_episodes", 1)
+        if n_episodes == 1:
+            solved_str = "Solved" if sr >= 1.0 else "Not solved"
+            print(f"  {solved_str}, Avg reward: {ar:+.4f}")
+        else:
+            print(f"  Solve rate: {sr:.1%}, Avg reward: {ar:+.4f}")
         print(f"  Programs evaluated: {leaf_eval.stats()['unique_programs']}")
 
 

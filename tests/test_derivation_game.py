@@ -340,3 +340,30 @@ class TestMCTSIntegration:
             f"Best solve_rate: {best_solve_rate}, "
             f"program: {best_program.pretty() if best_program else None}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestActionSpaceAfterFiltering
+# ---------------------------------------------------------------------------
+
+class TestActionSpaceAfterFiltering:
+
+    def test_action_space_size(self, leaf_eval):
+        """Action space size reflects filtered (dead-end-free) productions."""
+        game = DerivationGame(14, 6, leaf_eval)
+        # P(14): 8 valid structural choices × 6 sites = 48
+        assert game.action_space.n == 48
+
+    def test_no_truncation_in_game_episodes(self, leaf_eval):
+        """Play 100 random episodes — zero should truncate (dead-end)."""
+        rng = np.random.default_rng(42)
+        for _ in range(100):
+            game = DerivationGame(BUDGET_8, N_SITES, leaf_eval)
+            game.reset_wrapper()
+            while not (game.terminated or game.truncated):
+                mask = game.get_action_mask()
+                valid = np.where(mask)[0]
+                game.step_wrapper(int(rng.choice(valid)))
+            assert game.terminated and not game.truncated, (
+                "Episode truncated (dead end)"
+            )

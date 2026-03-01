@@ -38,6 +38,7 @@ class DerivationConfig(MetaConfig):
                 "n_sites": 6,
                 # LeafEvaluator sub-config (extracted in build())
                 "n_ones": 2,
+                "n_frozen_states": 1,
                 "bit_flip": True,
                 "sparse_reward": False,
                 "potential_name": "onemax",
@@ -118,6 +119,8 @@ class DerivationConfig(MetaConfig):
             potential_name=gk["potential_name"],
         )
         frozen_states = all_initial_states(n_sites, n_ones)
+        n_frozen = gk.get("n_frozen_states", len(frozen_states))
+        frozen_states = frozen_states[:n_frozen]
         leaf_eval = LeafEvaluator(
             n_sites,
             frozen_states,

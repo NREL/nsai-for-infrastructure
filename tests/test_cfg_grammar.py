@@ -22,6 +22,8 @@ from alphazeropp.instances.bitstring.dsl.budget_grammar import (
     ProgramHole, ConditionHole,
     count_conditions, count_programs,
     enumerate_conditions, enumerate_programs,
+    count_canonical_conditions, count_canonical_programs,
+    enumerate_canonical_conditions, enumerate_canonical_programs,
     format_grammar_summary, format_grammar_debug,
 )
 from alphazeropp.instances.bitstring.dsl.derivation import (
@@ -239,22 +241,38 @@ class TestDerivation:
 
 class TestDerivationCanonical:
     @pytest.mark.parametrize("budget", [2, 5, 7])
-    def test_derivation_matches_enumeration(self, budget):
-        """Programs from derivation DFS == programs from enumerate_programs."""
+    def test_derivation_subset_of_full(self, budget):
+        """Derivation programs are a subset of full enumeration."""
         enum_progs = set(p.pretty() for p in enumerate_programs(3, budget))
         deriv_progs = set(
             p.pretty() for p in enumerate_via_derivation(3, budget)
         )
-        assert enum_progs == deriv_progs, (
-            f"Mismatch at budget={budget}: "
-            f"enum={len(enum_progs)}, deriv={len(deriv_progs)}"
+        assert deriv_progs.issubset(enum_progs), (
+            f"Derivation produced programs not in full enum at budget={budget}"
         )
 
-    def test_derivation_count_matches(self):
-        """Derivation produces exactly the right number of programs."""
+    @pytest.mark.parametrize("budget", [2, 5, 7])
+    def test_derivation_superset_of_canonical(self, budget):
+        """Derivation programs are a superset of canonical enumeration."""
+        canon_progs = set(
+            p.pretty() for p in enumerate_canonical_programs(3, budget)
+        )
+        deriv_progs = set(
+            p.pretty() for p in enumerate_via_derivation(3, budget)
+        )
+        assert canon_progs.issubset(deriv_progs), (
+            f"Canonical programs missing from derivation at budget={budget}"
+        )
+
+    def test_derivation_count_in_range(self):
+        """Derivation count is between canonical and full counts."""
         for budget in [2, 5, 8]:
             deriv = enumerate_via_derivation(3, budget)
-            assert len(deriv) == count_programs(3, budget)
+            cp = count_canonical_programs(3, budget)
+            fp = count_programs(3, budget)
+            assert cp <= len(deriv) <= fp, (
+                f"budget={budget}: canonical={cp}, deriv={len(deriv)}, full={fp}"
+            )
 
     def test_only_leftmost_hole_expandable(self):
         """At any state, productions match the leftmost hole's kind and budget."""
@@ -330,3 +348,299 @@ class TestEdgeCases:
         """Enumerated programs pass validate()."""
         for prog in enumerate_programs(3, 5):
             prog.validate(n_sites=3)  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Dead-end prevention
+# ---------------------------------------------------------------------------
+
+def _assert_no_dead_holes(node, n_sites):
+    """Recursively verify no hole in the subtree has zero completions."""
+    if isinstance(node, ProgramHole):
+        assert count_programs(n_sites, node.budget) > 0, (
+            f"Dead-end ProgramHole({node.budget}): "
+            f"count_programs={count_programs(n_sites, node.budget)}"
+        )
+    if isinstance(node, ConditionHole):
+        assert count_conditions(n_sites, node.budget) > 0, (
+            f"Dead-end ConditionHole({node.budget}): "
+            f"count_conditions={count_conditions(n_sites, node.budget)}"
+        )
+    if isinstance(node, Ite):
+        _assert_no_dead_holes(node.cond, n_sites)
+        _assert_no_dead_holes(node.action, n_sites)
+        _assert_no_dead_holes(node.else_prog, n_sites)
+    elif isinstance(node, Default):
+        _assert_no_dead_holes(node.action, n_sites)
+    elif isinstance(node, Not):
+        _assert_no_dead_holes(node.child, n_sites)
+    elif isinstance(node, And):
+        _assert_no_dead_holes(node.left, n_sites)
+        _assert_no_dead_holes(node.right, n_sites)
+
+
+class TestDeadEndPrevention:
+    @pytest.mark.parametrize("budget", range(2, 15))
+    def test_no_dead_end_productions(self, budget):
+        """Every hole created by a production must be completable."""
+        from alphazeropp.instances.bitstring.dsl.derivation import _program_productions
+        n_sites = 6
+        for prod in _program_productions(budget, n_sites):
+            _assert_no_dead_holes(prod.result, n_sites)
+
+    def test_program_counts_unchanged(self):
+        """Filtering dead-end productions must not change program counts."""
+        assert count_programs(3, 2) == 3
+        assert count_programs(3, 3) == 0
+        assert count_programs(3, 4) == 0
+        assert count_programs(3, 5) == 27
+        assert count_programs(3, 8) == 513
+        assert count_programs(6, 14) == 151_173_432
+
+    def test_random_derivations_never_truncate(self):
+        """1000 random derivation episodes should all reach terminal state."""
+        n_sites = 6
+        rng = np.random.default_rng(42)
+        truncations = 0
+        for _ in range(1000):
+            state = DerivationState.initial(14)
+            while not state.is_terminal():
+                prods = state.legal_productions(n_sites)
+                if not prods:
+                    truncations += 1
+                    break
+                state = state.apply(prods[rng.integers(len(prods))])
+        assert truncations == 0, f"Got {truncations}/1000 truncations (expected 0)"
+
+    @pytest.mark.parametrize("budget", [2, 5, 7])
+    def test_derivation_subset_of_full(self, budget):
+        """Derivation programs are a subset of full enumeration."""
+        enum_progs = set(p.pretty() for p in enumerate_programs(3, budget))
+        deriv_progs = set(
+            p.pretty() for p in enumerate_via_derivation(3, budget)
+        )
+        assert deriv_progs.issubset(enum_progs)
+
+
+# ---------------------------------------------------------------------------
+# Canonical condition/program counts (Phase 1)
+# ---------------------------------------------------------------------------
+
+class TestCanonicalConditionCounts:
+    """Golden values for count_canonical_conditions (N=3)."""
+
+    @pytest.mark.parametrize("budget,expected", [
+        (1, 3), (2, 3), (3, 6), (4, 15), (5, 33), (6, 87), (7, 228),
+    ])
+    def test_golden_values(self, budget, expected):
+        assert count_canonical_conditions(3, budget) == expected
+
+    def test_zero_and_negative(self):
+        assert count_canonical_conditions(3, 0) == 0
+        assert count_canonical_conditions(3, -1) == 0
+
+    @pytest.mark.parametrize("budget", range(1, 8))
+    def test_matches_enumeration_length(self, budget):
+        """count matches len(enumerate) for canonical conditions."""
+        cc = count_canonical_conditions(3, budget)
+        ec = len(enumerate_canonical_conditions(3, budget))
+        assert cc == ec, f"C({budget}): count={cc}, enum={ec}"
+
+    @pytest.mark.parametrize("budget", range(1, 8))
+    def test_at_most_full_count(self, budget):
+        """Canonical count <= full count (it's a subset)."""
+        assert (count_canonical_conditions(3, budget)
+                <= count_conditions(3, budget))
+
+    @pytest.mark.parametrize("budget", range(1, 13))
+    def test_no_dead_budget(self, budget):
+        """Every condition budget >= 1 has at least one canonical condition."""
+        assert count_canonical_conditions(6, budget) > 0
+
+
+class TestCanonicalProgramCounts:
+    """Golden values for count_canonical_programs (N=3)."""
+
+    @pytest.mark.parametrize("budget,expected", [
+        (2, 3), (3, 0), (4, 0), (5, 27), (6, 27), (7, 54), (8, 378),
+    ])
+    def test_golden_values(self, budget, expected):
+        assert count_canonical_programs(3, budget) == expected
+
+    def test_n6_budget14(self):
+        """Key config: N=6, budget=14."""
+        assert count_canonical_programs(6, 14) == 37_463_688
+
+    @pytest.mark.parametrize("budget", [2, 5, 7, 8])
+    def test_matches_enumeration_length(self, budget):
+        """count matches len(enumerate) for canonical programs."""
+        cp = count_canonical_programs(3, budget)
+        ep = len(enumerate_canonical_programs(3, budget))
+        assert cp == ep, f"P({budget}): count={cp}, enum={ep}"
+
+    @pytest.mark.parametrize("budget", range(1, 9))
+    def test_at_most_full_count(self, budget):
+        """Canonical count <= full count."""
+        assert (count_canonical_programs(3, budget)
+                <= count_programs(3, budget))
+
+
+class TestCanonicalEnumerationProperties:
+    """Verify structural properties of canonical conditions."""
+
+    @pytest.mark.parametrize("budget", range(1, 7))
+    def test_no_double_negation(self, budget):
+        """No canonical condition contains Not(Not(...))."""
+        for cond in enumerate_canonical_conditions(3, budget):
+            _assert_no_double_neg(cond)
+
+    @pytest.mark.parametrize("budget", range(3, 7))
+    def test_and_canonical_order(self, budget):
+        """All And nodes have left_budget <= right_budget."""
+        for cond in enumerate_canonical_conditions(3, budget):
+            _assert_and_canonical(cond)
+
+    @pytest.mark.parametrize("budget", [2, 5, 7, 8])
+    def test_no_duplicate_canonical_programs(self, budget):
+        """No duplicate programs in canonical enumeration."""
+        progs = enumerate_canonical_programs(3, budget)
+        pretty_strs = [p.pretty() for p in progs]
+        assert len(pretty_strs) == len(set(pretty_strs))
+
+    @pytest.mark.parametrize("budget", range(1, 7))
+    def test_no_duplicate_canonical_conditions(self, budget):
+        """No duplicate conditions in canonical enumeration."""
+        conds = enumerate_canonical_conditions(3, budget)
+        pretty_strs = [c.pretty() for c in conds]
+        assert len(pretty_strs) == len(set(pretty_strs))
+
+    @pytest.mark.parametrize("budget", [2, 5, 7, 8])
+    def test_canonical_is_subset_of_full(self, budget):
+        """Every canonical program also appears in full enumeration."""
+        full = set(p.pretty() for p in enumerate_programs(3, budget))
+        canon = set(p.pretty() for p in enumerate_canonical_programs(3, budget))
+        assert canon.issubset(full)
+
+
+# ---------------------------------------------------------------------------
+# Derivation canonicality checks (Phase 2 + Phase 3)
+# ---------------------------------------------------------------------------
+
+class TestDerivationCanonicalProperties:
+    """Verify that the canonical derivation engine produces well-formed programs."""
+
+    def test_no_double_neg_in_derivation(self):
+        """1000 random derivations at budget=14 produce no Not(Not(...))."""
+        rng = np.random.default_rng(123)
+        for _ in range(1000):
+            state = DerivationState.initial(14)
+            while not state.is_terminal():
+                prods = state.legal_productions(6)
+                assert prods, "Dead-end encountered"
+                state = state.apply(prods[rng.integers(len(prods))])
+            prog = state.to_program()
+            _assert_no_double_neg_program(prog)
+
+    def test_and_budget_ordering_in_derivation(self):
+        """1000 random derivations verify And left_budget <= right_budget."""
+        rng = np.random.default_rng(456)
+        for _ in range(1000):
+            state = DerivationState.initial(14)
+            while not state.is_terminal():
+                prods = state.legal_productions(6)
+                assert prods, "Dead-end encountered"
+                state = state.apply(prods[rng.integers(len(prods))])
+            prog = state.to_program()
+            _assert_and_budget_ordering_program(prog)
+
+    def test_condition_productions_parent_is_not(self):
+        """_condition_productions with parent_is_not=True never returns Not."""
+        from alphazeropp.instances.bitstring.dsl.derivation import (
+            _condition_productions,
+        )
+        for k in range(1, 13):
+            prods = _condition_productions(k, 6, parent_is_not=True)
+            for p in prods:
+                assert not isinstance(p.result, Not), (
+                    f"Not production at C({k}) with parent_is_not=True: {p.label}"
+                )
+
+    def test_action_space_unchanged(self):
+        """compute_max_productions returns the expected value."""
+        from alphazeropp.instances.bitstring.dsl.derivation_game import (
+            compute_max_productions,
+        )
+        assert compute_max_productions(14, 6) == 48
+
+
+class TestCrossValidation:
+    """Cross-validate canonical enumeration against canonical derivation."""
+
+    @pytest.mark.parametrize("budget", [2, 5, 6])
+    def test_exact_match_no_equal_budget_and(self, budget):
+        """At budgets where no And(C(i),C(i)) exists, derivation == canonical."""
+        canon = set(
+            p.pretty() for p in enumerate_canonical_programs(3, budget)
+        )
+        deriv = set(
+            p.pretty() for p in enumerate_via_derivation(3, budget)
+        )
+        assert canon == deriv, (
+            f"P({budget}): canon={len(canon)}, deriv={len(deriv)}"
+        )
+
+
+def _assert_no_double_neg_program(prog):
+    """Check no double-negation in any condition of a program."""
+    if isinstance(prog, Ite):
+        _assert_no_double_neg(prog.cond)
+        _assert_no_double_neg_program(prog.else_prog)
+    # Default has no conditions
+
+
+def _assert_and_budget_ordering_program(prog):
+    """Check And budget ordering in all conditions of a program."""
+    if isinstance(prog, Ite):
+        _assert_and_budget_ordering_cond(prog.cond)
+        _assert_and_budget_ordering_program(prog.else_prog)
+
+
+def _assert_and_budget_ordering_cond(node):
+    """Check And left_budget <= right_budget (budget-level only)."""
+    if isinstance(node, And):
+        assert node.left.node_count() <= node.right.node_count(), (
+            f"And budget ordering violated: {node.pretty()}"
+        )
+        _assert_and_budget_ordering_cond(node.left)
+        _assert_and_budget_ordering_cond(node.right)
+    elif isinstance(node, Not):
+        _assert_and_budget_ordering_cond(node.child)
+
+
+def _assert_no_double_neg(node):
+    """Recursively verify no Not(Not(...)) pattern."""
+    if isinstance(node, Not):
+        assert not isinstance(node.child, Not), (
+            f"Double negation found: {node.pretty()}"
+        )
+        _assert_no_double_neg(node.child)
+    elif isinstance(node, And):
+        _assert_no_double_neg(node.left)
+        _assert_no_double_neg(node.right)
+
+
+def _assert_and_canonical(node):
+    """Recursively verify And budget ordering: left <= right."""
+    if isinstance(node, And):
+        assert node.left.node_count() <= node.right.node_count(), (
+            f"And not canonical: left={node.left.node_count()}, "
+            f"right={node.right.node_count()} in {node.pretty()}"
+        )
+        if node.left.node_count() == node.right.node_count():
+            assert node.left.pretty() <= node.right.pretty(), (
+                f"And tiebreaker violated: {node.pretty()}"
+            )
+        _assert_and_canonical(node.left)
+        _assert_and_canonical(node.right)
+    elif isinstance(node, Not):
+        _assert_and_canonical(node.child)

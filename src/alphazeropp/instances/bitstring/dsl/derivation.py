@@ -21,6 +21,7 @@ from alphazeropp.instances.bitstring.dsl.budget_grammar import (
     ProgramHole, ConditionHole,
     enumerate_conditions, count_conditions,
     enumerate_programs, count_programs,
+    _ccnn,
 )
 
 
@@ -169,6 +170,8 @@ def _program_productions(budget: int, n_sites: int) -> list[Production]:
     if budget >= 5:
         for i in range(1, budget - 3):  # i in [1, k-4]
             else_budget = budget - 2 - i
+            if count_programs(n_sites, else_budget) == 0:
+                continue  # Skip dead-end budgets (e.g., 3 and 4)
             for j in range(n_sites):
                 result = Ite(ConditionHole(i), Flip(j), ProgramHole(else_budget))
                 prods.append(Production(
@@ -180,8 +183,17 @@ def _program_productions(budget: int, n_sites: int) -> list[Production]:
     return prods
 
 
-def _condition_productions(budget: int, n_sites: int) -> list[Production]:
-    """Generate all productions for a ConditionHole with given budget."""
+def _condition_productions(
+    budget: int, n_sites: int, parent_is_not: bool = False,
+) -> list[Production]:
+    """Generate canonical productions for a ConditionHole with given budget.
+
+    Canonicalization rules:
+      1. **Double-negation ban**: When *parent_is_not* is True (this hole is
+         the child of a ``Not``), suppress the ``Not(C(k-1))`` production.
+      2. **And commutativity**: For ``And(C(i), C(j))``, restrict to
+         ``i <= j`` (left budget <= right budget).
+    """
     prods: list[Production] = []
 
     # C(1) → IsZero(j)
@@ -193,19 +205,20 @@ def _condition_productions(budget: int, n_sites: int) -> list[Production]:
                 label=f"C({budget}) -> IsZero({j})",
             ))
 
-    # C(k) → Not(C(k-1))
-    if budget >= 2:
+    # C(k) → Not(C(k-1))  — only if parent is NOT a Not, and child
+    # has canonical non-Not completions (prevents dead-end holes).
+    if budget >= 2 and not parent_is_not and _ccnn(n_sites, budget - 1) > 0:
         child_budget = budget - 1
-        result = Not(ConditionHole(child_budget))
+        result = Not(ConditionHole(child_budget, parent_is_not=True))
         prods.append(Production(
             hole_kind="C", hole_budget=budget,
             result=result,
             label=f"C({budget}) -> Not(C({child_budget}))",
         ))
 
-    # C(k) → And(C(i), C(k-1-i))
+    # C(k) → And(C(i), C(k-1-i))  — canonical: i <= k-1-i
     if budget >= 3:
-        for i in range(1, budget - 1):
+        for i in range(1, (budget - 1) // 2 + 1):
             right_budget = budget - 1 - i
             result = And(ConditionHole(i), ConditionHole(right_budget))
             prods.append(Production(
@@ -256,7 +269,9 @@ class DerivationState:
         if isinstance(hole, ProgramHole):
             return _program_productions(hole.budget, n_sites)
         elif isinstance(hole, ConditionHole):
-            return _condition_productions(hole.budget, n_sites)
+            return _condition_productions(
+                hole.budget, n_sites, hole.parent_is_not,
+            )
         return []
 
     def apply(self, production: Production) -> DerivationState:
