@@ -12,6 +12,7 @@ from alphazeropp.utils.interactive_config import (
 import copy
 import torch
 import logging
+from alphazeropp.training.gated_trainer import GatedTrainer
 from datetime import datetime
 from pathlib import Path
 
@@ -330,27 +331,16 @@ def main():
     optimal_reward = (n_sites - n_ones) / n_sites
 
     # Training loop
+    gated_trainer = GatedTrainer(trainer, evaluator, cfg.run.accept_threshold)
     for i in range(cfg.run.n_iterations):
         print_iteration_header(i + 1, cfg.run.n_iterations)
 
-        old_agent = copy.deepcopy(trainer.agent)
-        trainer.train_iteration()
-        new_agent = copy.deepcopy(trainer.agent)
-        score = evaluator.pit(new_agent=new_agent, old_agent=old_agent)
+        score, accepted = gated_trainer.train_iteration()
 
         print_iteration_summary(
             i + 1, cfg.run.n_iterations, score,
             trainer.statistics_manager, evaluator.statistics_manager,
         )
-
-        # if score >= cfg.run.accept_threshold:
-        #     print("Keeping the new network")
-        #     trainer.net = new_agent.net
-        #     agent.net = new_agent.net
-        # else:
-        #     print("Reverting to the old network")
-        #     trainer.net = old_agent.net
-        #     agent.net = old_agent.net
 
         # Save training logs after each iteration
         trainer.statistics_manager.save_jsonl(str(exp_dir / "train_stats.jsonl"))
