@@ -5,6 +5,9 @@ use_deterministic_cuda()
 import numpy as np
 
 from alphazeropp.instances import BitStringConfig
+from alphazeropp.utils.interactive_config import (
+    build_param_list, interactive_edit, attr_setter, dict_setter,
+)
 
 import copy
 import torch
@@ -31,46 +34,39 @@ def models_equal(m1, m2):
 # Config display & interactive editing
 # ---------------------------------------------------------------------------
 
-def _build_param_table(cfg):
-    """Build a list of (number, label, value, setter, description) for all editable params."""
-    params = []
-    n = 1
-
-    def add(label, value, setter, desc="", choices=None):
-        nonlocal n
-        params.append((n, label, value, setter, desc, choices))
-        n += 1
-
-    # Game
+def _build_sections(cfg):
+    """Return sections for BitString AlphaZero config."""
     def _set_n_sites(val):
         cfg.game.kwargs["n_sites"] = val
         cfg.net.kwargs["n_sites"] = val
 
     def _set_sparse_reward(val):
         cfg.game.kwargs["sparse_reward"] = val
-        if val:  # Reset fitness_fn when switching to sparse
+        if val:
             cfg.game.kwargs["fitness_fn"] = None
 
-    add("n_sites", cfg.game.kwargs["n_sites"], _set_n_sites,
-        "Length of the binary vector")
-    add("bit_flip", cfg.game.kwargs["bit_flip"],
-        lambda val: cfg.game.kwargs.__setitem__("bit_flip", val),
-        "Actions flip bits (vs set bits)")
-    add("sparse_reward", cfg.game.kwargs["sparse_reward"],
-        _set_sparse_reward, "Reward only at episode end")
+    params = [
+        ("n_sites",      cfg.game.kwargs["n_sites"],      _set_n_sites,
+         "Length of the binary vector", None),
+        ("bit_flip",     cfg.game.kwargs["bit_flip"],      dict_setter(cfg.game.kwargs, "bit_flip"),
+         "Actions flip bits (vs set bits)", None),
+        ("sparse_reward", cfg.game.kwargs["sparse_reward"], _set_sparse_reward,
+         "Reward only at episode end", None),
+    ]
 
     if not cfg.game.kwargs.get("sparse_reward", False):
-        add("fitness_fn", cfg.game.kwargs.get("fitness_fn", None),
-            lambda val: cfg.game.kwargs.__setitem__("fitness_fn", val),
-            "0:None 1:leading_ones 2:binval",
-            choices=[None, "leading_ones", "binval"])
+        params.append(
+            ("fitness_fn", cfg.game.kwargs.get("fitness_fn", None),
+             dict_setter(cfg.game.kwargs, "fitness_fn"),
+             "0:None 1:leading_ones 2:binval",
+             [None, "leading_ones", "binval"]))
         if cfg.game.kwargs.get("fitness_fn") is not None:
-            add("reward_mode", cfg.game.kwargs.get("reward_mode", "dense_potential"),
-                lambda val: cfg.game.kwargs.__setitem__("reward_mode", val),
-                "dense_potential or sparse_pm1")
+            params.append(
+                ("reward_mode", cfg.game.kwargs.get("reward_mode", "dense_potential"),
+                 dict_setter(cfg.game.kwargs, "reward_mode"),
+                 "dense_potential or sparse_pm1", None))
 
-    # MCTS
-    descs = {
+    mcts_descs = {
         "n_simulations":    "MCTS rollouts per move",
         "temperature":      "Exploration temperature for action selection",
         "c_exploration":    "UCB exploration constant",
@@ -79,132 +75,57 @@ def _build_param_table(cfg):
     }
     for k in ["n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon"]:
         if k in cfg.agent.mcts_params:
-            v = cfg.agent.mcts_params[k]
-            add(k, v, lambda val, _k=k: cfg.agent.mcts_params.__setitem__(_k, val),
-                descs[k])
+            params.append(
+                (k, cfg.agent.mcts_params[k], dict_setter(cfg.agent.mcts_params, k),
+                 mcts_descs[k], None))
 
-    # Agent
-    add("reward_discount", cfg.agent.reward_discount,
-        lambda val: setattr(cfg.agent, "reward_discount", val),
-        "Discount factor for future rewards")
+    params.extend([
+        ("reward_discount",   cfg.agent.reward_discount,
+         attr_setter(cfg.agent, "reward_discount"),
+         "Discount factor for future rewards", None),
+        ("n_games_per_train", cfg.trainer.n_games_per_train,
+         attr_setter(cfg.trainer, "n_games_per_train"),
+         "Self-play games per training iteration", None),
+        ("n_past_iters",      cfg.trainer.n_past_iterations_to_train,
+         attr_setter(cfg.trainer, "n_past_iterations_to_train"),
+         "Past iterations kept in training buffer", None),
+        ("n_procs",           cfg.trainer.n_procs,
+         attr_setter(cfg.trainer, "n_procs"),
+         "Parallel workers for self-play", None),
+        ("eval_n_games",      cfg.evaluator.n_games,
+         attr_setter(cfg.evaluator, "n_games"),
+         "Games to pit new vs old agent", None),
+        ("eval_n_procs",      cfg.evaluator.n_procs,
+         attr_setter(cfg.evaluator, "n_procs"),
+         "Parallel workers for evaluation", None),
+        ("n_iterations",      cfg.run.n_iterations,
+         attr_setter(cfg.run, "n_iterations"),
+         "Total training iterations", None),
+        ("accept_threshold",  cfg.run.accept_threshold,
+         attr_setter(cfg.run, "accept_threshold"),
+         "Win rate to accept new network", None),
+        ("plot_every",        cfg.run.plot_every,
+         attr_setter(cfg.run, "plot_every"),
+         "Plot metrics every N iterations", None),
+    ])
 
-    # Trainer
-    add("n_games_per_train", cfg.trainer.n_games_per_train,
-        lambda val: setattr(cfg.trainer, "n_games_per_train", val),
-        "Self-play games per training iteration")
-    add("n_past_iters", cfg.trainer.n_past_iterations_to_train,
-        lambda val: setattr(cfg.trainer, "n_past_iterations_to_train", val),
-        "Past iterations kept in training buffer")
-    add("n_procs", cfg.trainer.n_procs,
-        lambda val: setattr(cfg.trainer, "n_procs", val),
-        "Parallel workers for self-play")
+    all_params = build_param_list(params)
 
-    # Evaluator
-    add("eval_n_games", cfg.evaluator.n_games,
-        lambda val: setattr(cfg.evaluator, "n_games", val),
-        "Games to pit new vs old agent")
-    add("eval_n_procs", cfg.evaluator.n_procs,
-        lambda val: setattr(cfg.evaluator, "n_procs", val),
-        "Parallel workers for evaluation")
+    game_labels = {"n_sites", "bit_flip", "sparse_reward", "fitness_fn", "reward_mode"}
+    mcts_labels = {"n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon"}
+    agent_labels = {"reward_discount"}
+    trainer_labels = {"n_games_per_train", "n_past_iters", "n_procs"}
+    evaluator_labels = {"eval_n_games", "eval_n_procs"}
+    run_labels = {"n_iterations", "accept_threshold", "plot_every"}
 
-    # Run
-    add("n_iterations", cfg.run.n_iterations,
-        lambda val: setattr(cfg.run, "n_iterations", val),
-        "Total training iterations")
-    add("accept_threshold", cfg.run.accept_threshold,
-        lambda val: setattr(cfg.run, "accept_threshold", val),
-        "Win rate to accept new network")
-    add("plot_every", cfg.run.plot_every,
-        lambda val: setattr(cfg.run, "plot_every", val),
-        "Plot metrics every N iterations")
-
-    return params
-
-
-def display_config(cfg):
-    """Print all hyperparameters as a numbered table with descriptions."""
-    params = _build_param_table(cfg)
-
-    sections = [
-        ("Game",      [p for p in params if p[1] in ("n_sites", "bit_flip", "sparse_reward", "fitness_fn", "reward_mode")]),
-        ("MCTS",      [p for p in params if p[1] in ("n_simulations", "temperature", "c_exploration", "dirichlet_alpha", "dirichlet_epsilon")]),
-        ("Agent",     [p for p in params if p[1] in ("reward_discount",)]),
-        ("Trainer",   [p for p in params if p[1] in ("n_games_per_train", "n_past_iters", "n_procs")]),
-        ("Evaluator", [p for p in params if p[1] in ("eval_n_games", "eval_n_procs")]),
-        ("Run",       [p for p in params if p[1] in ("n_iterations", "accept_threshold", "plot_every")]),
+    return [
+        ("Game",      [p for p in all_params if p[1] in game_labels]),
+        ("MCTS",      [p for p in all_params if p[1] in mcts_labels]),
+        ("Agent",     [p for p in all_params if p[1] in agent_labels]),
+        ("Trainer",   [p for p in all_params if p[1] in trainer_labels]),
+        ("Evaluator", [p for p in all_params if p[1] in evaluator_labels]),
+        ("Run",       [p for p in all_params if p[1] in run_labels]),
     ]
-
-    print("\n=== BitString Config ===\n")
-    for section_name, section_params in sections:
-        print(f"  {section_name}:")
-        for num, label, value, _, desc, *_ in section_params:
-            line = f"    {num:>2}) {label:<22} = {str(value):<10}"
-            if desc:
-                line += f"  # {desc}"
-            print(line)
-        print()
-
-
-def _parse_value(raw, current_value):
-    """Parse a string input to the same type as current_value."""
-    t = type(current_value)
-    if t is bool:
-        return raw.strip().lower() in ("true", "1", "yes")
-    if current_value is None:
-        # For None-typed fields (like fitness_fn): "None"/"none" → None, else string
-        return None if raw.strip().lower() in ("none", "") else raw.strip()
-    return t(raw)
-
-
-def interactive_edit(cfg):
-    """Display config and let user edit parameters by number."""
-    while True:
-        display_config(cfg)
-        params = _build_param_table(cfg)
-        param_map = {p[0]: p for p in params}
-
-        choice = input("  Enter number to edit (or 'run' to start): ").strip()
-        if choice.lower() in ("run", "start", ""):
-            break
-
-        try:
-            num = int(choice)
-        except ValueError:
-            print(f"  Invalid input: '{choice}'. Enter a number or 'run'.")
-            continue
-
-        if num not in param_map:
-            print(f"  No parameter with number {num}.")
-            continue
-
-        _, label, current, setter, _, choices = param_map[num]
-
-        if choices is not None:
-            print(f"  {label} options:")
-            for i, c in enumerate(choices):
-                print(f"    {i}) {c}")
-            raw = input(f"  Select [0-{len(choices)-1}]: ").strip()
-            if raw == "":
-                continue
-            try:
-                idx = int(raw)
-                if 0 <= idx < len(choices):
-                    setter(choices[idx])
-                    print(f"  Updated: {label} = {choices[idx]}")
-                else:
-                    print(f"  Invalid selection: {idx}")
-            except ValueError:
-                print(f"  Invalid input: '{raw}'. Enter a number.")
-        else:
-            raw = input(f"  New value for {label} ({type(current).__name__}) [{current}]: ").strip()
-            if raw == "":
-                continue
-            try:
-                new_val = _parse_value(raw, current)
-                setter(new_val)
-                print(f"  Updated: {label} = {new_val}")
-            except (ValueError, TypeError) as e:
-                print(f"  Invalid value: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +184,67 @@ def print_banner(cfg, exp_dir):
     print("    [EVAL]   Pitting new network vs old network")
     print("    [ITER]   Iteration summary with key metrics")
     print("=" * 80)
+    print()
+
+
+def print_architecture(cfg):
+    """Print the AlphaZero training loop architecture diagram."""
+    n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
+    n_games = cfg.trainer.n_games_per_train
+    n_iters = cfg.run.n_iterations
+    n_past = cfg.trainer.n_past_iterations_to_train
+    gamma = cfg.agent.reward_discount
+    n_sites = cfg.game.kwargs.get("n_sites", "?")
+
+    print("=" * 80)
+    print("  Algorithm Architecture: AlphaZero (Self-Play + Learning)")
+    print("=" * 80)
+    print()
+    print(f"  Game: {n_sites}-bit binary vector.  Goal: flip all bits to 1.")
+    print(f"  Outer loop: {n_iters} training iterations")
+    print(f"  Each iteration: {n_games} self-play games -> train net -> evaluate")
+    print()
+    print("  ┌── Iteration i ──────────────────────────────────────────────────────┐")
+    print("  │                                                                      │")
+    print(f"  │  STEP 1: Self-Play  ({n_games} games, each ~{n_sites} moves)")
+    print("  │")
+    print("  │    Game:  s₀ ──move──> s₁ ──move──> s₂ ──> ... ──> terminal")
+    print("  │")
+    print("  │    Each move creates a FRESH MCTS tree:")
+    print(f"  │      mcts = MCTS(state, neural_net, n_sims={n_sims})")
+    print("  │      ┌──────────────────────────────────────────────────────────┐")
+    print(f"  │      │  for sim in 1..{n_sims}:")
+    print("  │      │    SELECT  → traverse tree via UCB")
+    print("  │      │              UCB = Q_norm(s,a) + c · π_net(a) · √N/(1+Nₐ)")
+    print("  │      │    EXPAND  → hit new node, query net f_θ(s) → (π, v)")
+    print("  │      │    BACKUP  → Q(s,a) = running_mean(R(s,a) + V(s'))")
+    print("  │      └──────────────────────────────────────────────────────────┘")
+    print("  │      π_MCTS = visit_counts^(1/τ) / Σ      ← distilled search result")
+    print("  │      action ~ π_MCTS                       ← sample move")
+    print("  │      SAVE (state, π_MCTS)                  ← becomes training target")
+    print("  │      DISCARD tree                          ← net carries knowledge")
+    print("  │")
+    print(f"  │    After game ends (γ={gamma}):")
+    print("  │      zₜ = rₜ + γ·rₜ₊₁ + γ²·rₜ₊₂ + ...    (discounted return)")
+    print("  │      Training examples: [(s₁, π₁, z₁), (s₂, π₂, z₂), ...]")
+    print("  │")
+    print(f"  │  STEP 2: Train Neural Net  (replay buffer: last {n_past} iterations)")
+    print("  │")
+    print("  │    L = (z - v_θ(s))²  −  π_MCTS · log p_θ(s)  +  c·‖θ‖²")
+    print("  │        ─────────────     ─────────────────────     ───────")
+    print("  │        value loss:        policy loss:             weight decay")
+    print("  │        predict return     imitate MCTS")
+    print("  │    θ ← θ − α · ∇L")
+    print("  │")
+    print("  │  STEP 3: Evaluate")
+    print("  │    Pit new_net vs old_net.  Accept if win_rate ≥ threshold.")
+    print("  │                                                                      │")
+    print("  └──────────────────────────────────────────────────────────────────────┘")
+    print()
+    print("  Knowledge flow:")
+    print("    Trees are DISPOSABLE.  They produce training data (s, π_MCTS, z).")
+    print("    Neural net f_θ is the KNOWLEDGE CARRIER across iterations.")
+    print("    Better net → better MCTS → better data → better net (virtuous cycle)")
     print()
 
 
@@ -331,7 +313,7 @@ def main():
     cfg.agent.random_seeds["eval"] = 23
 
     # Interactive config editing
-    interactive_edit(cfg)
+    interactive_edit("BitString Config", lambda: _build_sections(cfg))
 
     # Setup experiment directory
     exp_dir = setup_experiment_dir(cfg)
@@ -341,12 +323,12 @@ def main():
     game, net, agent, trainer, evaluator = cfg.build()
 
     print_banner(cfg, exp_dir)
+    print_architecture(cfg)
 
     n_sites = cfg.game.kwargs["n_sites"]
     n_ones = 2  # Hardcoded in BitStringGym.__init__
     optimal_reward = (n_sites - n_ones) / n_sites
 
-    breakpoint()
     # Training loop
     for i in range(cfg.run.n_iterations):
         print_iteration_header(i + 1, cfg.run.n_iterations)

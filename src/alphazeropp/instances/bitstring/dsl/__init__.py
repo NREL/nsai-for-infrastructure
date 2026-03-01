@@ -22,3 +22,10 @@ from alphazeropp.instances.bitstring.dsl.budget_grammar import (
 from alphazeropp.instances.bitstring.dsl.derivation import (
     DerivationState, Production,
 )
+from alphazeropp.instances.bitstring.dsl.game_config import (
+    GameConfig, all_initial_states,
+)
+from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
+from alphazeropp.instances.bitstring.dsl.derivation_game import (
+    DerivationGame, UniformPolicyValueNet,
+)
