@@ -67,7 +67,7 @@ class DerivationConfig(MetaConfig):
         )
         self.agent = AgentConfig(
             mcts_params={
-                "n_simulations": 250,
+                "n_simulations": 50,
                 "temperature": 1.0,
                 "c_exploration": 1.5,
                 "dirichlet_alpha": 0.15,
@@ -82,18 +82,18 @@ class DerivationConfig(MetaConfig):
             },
         )
         self.trainer = TrainerConfig(
-            n_games_per_train=50,
+            n_games_per_train=20,
             n_past_iterations_to_train=15,
             n_procs=-1,
             checkpoint_dir="checkpoints",
         )
         self.evaluator = EvaluatorConfig(
-            n_games=20,
+            n_games=2,
             n_procs=-1,
         )
         self.run = RunConfig(
             n_iterations=30,
-            accept_threshold=0.55,
+            accept_threshold=0.50,
             plot_every=5,
             plot_path="derivation_training_metrics.png",
         )

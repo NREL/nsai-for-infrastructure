@@ -87,9 +87,24 @@ class Trainer:
                 (i, self.agent._randseed("train"), self.agent._randseed("mcts"))
                 for i in range(self.n_games_per_train)
             ]
-            train_example_sets = MultiprocessingManager.starmap(
-                multiprocessing_function, arg_tuples, self.n_procs
-            )
+            if self.n_procs is not None and self.n_procs < 0:
+                # Sequential mode: run with per-game progress logging
+                train_example_sets = []
+                for j, args in enumerate(arg_tuples):
+                    t0 = time.time()
+                    result = multiprocessing_function(*args)
+                    elapsed = time.time() - t0
+                    n_steps = len(result[0])
+                    reward = result[1]
+                    logger.info(
+                        "[TRAIN] Game %d/%d complete (%d steps, %.1fs, reward=%.4f)",
+                        j + 1, self.n_games_per_train, n_steps, elapsed, reward,
+                    )
+                    train_example_sets.append(result)
+            else:
+                train_example_sets = MultiprocessingManager.starmap(
+                    multiprocessing_function, arg_tuples, self.n_procs
+                )
         finally:
             mp_manager.pop()
         return train_example_sets # This should be a list of lists of examples, where each inner list corresponds to one game.
