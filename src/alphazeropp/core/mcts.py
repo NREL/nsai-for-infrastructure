@@ -130,8 +130,18 @@ class MCTS():
                 counts[action] = count
         
         if msg: print(msg, "mynode", mynode, "counts", counts)
-        counts = counts ** (1./self.temperature)
-        probs = counts / counts.sum()
+        # Numerically stable temperature scaling via log-space:
+        #   counts^(1/T) = exp(log(counts) / T)
+        # Subtracting the max before exp prevents overflow at low temperatures.
+        nonzero = counts > 0
+        if nonzero.any():
+            log_counts = np.full_like(counts, -np.inf)
+            log_counts[nonzero] = np.log(counts[nonzero]) / self.temperature
+            log_counts -= log_counts.max()
+            probs = np.exp(log_counts)
+            probs /= probs.sum()
+        else:
+            probs = counts  # all zeros — caller will handle
         # For debugging:
         # print(probs)
         

@@ -219,6 +219,18 @@ class DerivationGame(Game):
         ) = state
         return self
 
+    def clone(self) -> "DerivationGame":
+        """Return a lightweight independent copy.
+
+        Safe because AST nodes and Productions are frozen dataclasses,
+        and step() replaces (rather than mutates) all mutable fields.
+        """
+        new = DerivationGame(self.budget, self.n_sites, self.leaf_evaluator)
+        new.unstash_state(self.stash_state())
+        if self.obs is not None:
+            new.obs = self.obs.copy()
+        return new
+
     # -- Observation encoding --
 
     def _encode_obs(self) -> np.ndarray:

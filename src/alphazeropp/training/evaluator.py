@@ -1,6 +1,5 @@
 import time
 import logging
-import copy
 from typing import Optional
 
 import numpy as np
@@ -12,8 +11,9 @@ from alphazeropp.utils.statistics import StatisticsManager
 
 logger = logging.getLogger(__name__)
 
-# The following evaluator is not 100% complete.
-# I need to come back later to check what is missing and how to implement it.
+# Near-greedy temperature for evaluation: visit_counts ** 20 strongly
+# favours the most-visited action without division-by-zero risk.
+EVAL_TEMPERATURE = 0.05
 
 class Evaluator:
     """Evaluates and compares agents or networks."""
@@ -45,14 +45,20 @@ class Evaluator:
         import torch
         if torch.cuda.is_available():
             torch.cuda.init()
-        base_game = new_agent.game.stash_state()
+        base_game = new_agent.game.clone()
         base_game.reset_wrapper(seed=reset_seed)
-        old_game = copy.deepcopy(base_game)
-        new_game = copy.deepcopy(base_game)
+        old_game = base_game.clone()
+        new_game = base_game.clone()
         results = {}
         
-        old_trajectory, old_cumulative_reward = old_agent.play_one_round(game=old_game, random_seed=mcts_seed)
-        new_trajectory, new_cumulative_reward = new_agent.play_one_round(game=new_game, random_seed=mcts_seed)
+        old_trajectory, old_cumulative_reward = old_agent.play_one_round(
+            game=old_game, random_seed=mcts_seed,
+            add_noise=False, temperature_override=EVAL_TEMPERATURE,
+        )
+        new_trajectory, new_cumulative_reward = new_agent.play_one_round(
+            game=new_game, random_seed=mcts_seed,
+            add_noise=False, temperature_override=EVAL_TEMPERATURE,
+        )
         # old_sum_reward = sum(x[2] for x in old_result)
         # new_sum_reward = sum(x[2] for x in new_result)
         results["old_net"] = old_cumulative_reward

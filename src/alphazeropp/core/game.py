@@ -102,6 +102,10 @@ class Game(ABC, Generic[ObsType, ActType]):
         """
         return state
 
+    def clone(self) -> "Game":
+        """Return an independent playable copy of this game."""
+        return copy.deepcopy(self)
+
 class EnvGame(Game[ObsType, ActType]):
     """
     Abstract base class for Farama Gymnasium-based games. Contains a field `env:
