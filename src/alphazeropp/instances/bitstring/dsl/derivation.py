@@ -152,12 +152,23 @@ def _partial_pretty(node: Any) -> str:
 # Production generation
 # ---------------------------------------------------------------------------
 
-def _program_productions(budget: int, n_sites: int) -> list[Production]:
-    """Generate all productions for a ProgramHole with given budget."""
+def _program_productions(
+    budget: int, n_sites: int, mode: str = "exact",
+) -> list[Production]:
+    """Generate all productions for a ProgramHole with given budget.
+
+    In exact mode, P(k) -> Default(Flip(j)) only at k == 2, and Ite
+    expansions skip else_budgets with zero exact completions.
+
+    In max mode, P(k) -> Default(Flip(j)) at any k >= 2 (early
+    termination), and all Ite expansions are valid (else_budget >= 2
+    is guaranteed by loop bounds, and any P(m >= 2) can terminate).
+    """
     prods: list[Production] = []
 
-    # P(2) → Default(Flip(j))
-    if budget == 2:
+    # Terminate: P(k) → Default(Flip(j))
+    # Exact: only at k == 2.  Max: at any k >= 2.
+    if (mode == "exact" and budget == 2) or (mode == "max" and budget >= 2):
         for j in range(n_sites):
             result = Default(Flip(j))
             prods.append(Production(
@@ -166,12 +177,13 @@ def _program_productions(budget: int, n_sites: int) -> list[Production]:
                 label=f"P({budget}) -> Default(Flip({j}))",
             ))
 
-    # P(k) → Ite(C(i), Flip(j), P(k-2-i))  for k >= 5
+    # Expand: P(k) → Ite(C(i), Flip(j), P(k-2-i))  for k >= 5
     if budget >= 5:
         for i in range(1, budget - 3):  # i in [1, k-4]
             else_budget = budget - 2 - i
-            if count_programs(n_sites, else_budget) == 0:
+            if mode == "exact" and count_programs(n_sites, else_budget) == 0:
                 continue  # Skip dead-end budgets (e.g., 3 and 4)
+            # Max mode: else_budget >= 2 always (loop bounds guarantee it).
             for j in range(n_sites):
                 result = Ite(ConditionHole(i), Flip(j), ProgramHole(else_budget))
                 prods.append(Production(
@@ -185,6 +197,7 @@ def _program_productions(budget: int, n_sites: int) -> list[Production]:
 
 def _condition_productions(
     budget: int, n_sites: int, parent_is_not: bool = False,
+    mode: str = "exact",
 ) -> list[Production]:
     """Generate canonical productions for a ConditionHole with given budget.
 
@@ -193,11 +206,16 @@ def _condition_productions(
          the child of a ``Not``), suppress the ``Not(C(k-1))`` production.
       2. **And commutativity**: For ``And(C(i), C(j))``, restrict to
          ``i <= j`` (left budget <= right budget).
+
+    In max mode, C(k) -> IsZero(j) at any k >= 1 (early termination),
+    and the _ccnn dead-end guard for Not is bypassed (C(k-1,
+    parent_is_not=True) can always early-terminate to IsZero(j)).
     """
     prods: list[Production] = []
 
-    # C(1) → IsZero(j)
-    if budget == 1:
+    # Terminate: C(k) → IsZero(j)
+    # Exact: only at k == 1.  Max: at any k >= 1.
+    if (mode == "exact" and budget == 1) or (mode == "max" and budget >= 1):
         for j in range(n_sites):
             prods.append(Production(
                 hole_kind="C", hole_budget=budget,
@@ -205,16 +223,18 @@ def _condition_productions(
                 label=f"C({budget}) -> IsZero({j})",
             ))
 
-    # C(k) → Not(C(k-1))  — only if parent is NOT a Not, and child
-    # has canonical non-Not completions (prevents dead-end holes).
-    if budget >= 2 and not parent_is_not and _ccnn(n_sites, budget - 1) > 0:
-        child_budget = budget - 1
-        result = Not(ConditionHole(child_budget, parent_is_not=True))
-        prods.append(Production(
-            hole_kind="C", hole_budget=budget,
-            result=result,
-            label=f"C({budget}) -> Not(C({child_budget}))",
-        ))
+    # C(k) → Not(C(k-1))  — only if parent is NOT a Not.
+    # Exact: also guard with _ccnn to prevent dead-end C(k-1, parent_is_not).
+    # Max: _ccnn guard unnecessary (child can early-terminate to IsZero).
+    if budget >= 2 and not parent_is_not:
+        if mode == "max" or _ccnn(n_sites, budget - 1) > 0:
+            child_budget = budget - 1
+            result = Not(ConditionHole(child_budget, parent_is_not=True))
+            prods.append(Production(
+                hole_kind="C", hole_budget=budget,
+                result=result,
+                label=f"C({budget}) -> Not(C({child_budget}))",
+            ))
 
     # C(k) → And(C(i), C(k-1-i))  — canonical: i <= k-1-i
     if budget >= 3:
@@ -261,16 +281,18 @@ class DerivationState:
         """Find the leftmost hole via preorder traversal."""
         return _find_leftmost_hole(self.root)
 
-    def legal_productions(self, n_sites: int) -> list[Production]:
+    def legal_productions(
+        self, n_sites: int, mode: str = "exact",
+    ) -> list[Production]:
         """Get all legal productions for the leftmost hole."""
         hole = self.leftmost_hole()
         if hole is None:
             return []
         if isinstance(hole, ProgramHole):
-            return _program_productions(hole.budget, n_sites)
+            return _program_productions(hole.budget, n_sites, mode)
         elif isinstance(hole, ConditionHole):
             return _condition_productions(
-                hole.budget, n_sites, hole.parent_is_not,
+                hole.budget, n_sites, hole.parent_is_not, mode,
             )
         return []
 

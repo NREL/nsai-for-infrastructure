@@ -76,7 +76,9 @@ def _preorder_items(node: Any) -> list[tuple[float, float]]:
     return []
 
 
-def compute_max_productions(budget: int, n_sites: int) -> int:
+def compute_max_productions(
+    budget: int, n_sites: int, mode: str = "exact",
+) -> int:
     """Compute the maximum number of legal productions at any derivation step.
 
     Iterates over all possible hole budgets that could appear during
@@ -85,11 +87,11 @@ def compute_max_productions(budget: int, n_sites: int) -> int:
     """
     max_prods = 0
     for k in range(2, budget + 1):
-        n = len(_program_productions(k, n_sites))
+        n = len(_program_productions(k, n_sites, mode))
         if n > max_prods:
             max_prods = n
     for k in range(1, budget + 1):
-        n = len(_condition_productions(k, n_sites))
+        n = len(_condition_productions(k, n_sites, mode=mode))
         if n > max_prods:
             max_prods = n
     return max_prods
@@ -118,13 +120,17 @@ class DerivationGame(Game):
         budget: int,
         n_sites: int,
         leaf_evaluator: LeafEvaluator,
+        program_budget_mode: str = "exact",
     ):
         super().__init__()
         self.budget = budget
         self.n_sites = n_sites
         self.leaf_evaluator = leaf_evaluator
+        self._mode = program_budget_mode
 
-        self._max_productions = compute_max_productions(budget, n_sites)
+        self._max_productions = compute_max_productions(
+            budget, n_sites, mode=program_budget_mode,
+        )
         self.action_space = spaces.Discrete(self._max_productions)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
@@ -138,7 +144,7 @@ class DerivationGame(Game):
     def reset(self, **kwargs) -> Tuple[np.ndarray, dict]:
         self._deriv_state = DerivationState.initial(self.budget)
         self._current_productions = self._deriv_state.legal_productions(
-            self.n_sites
+            self.n_sites, mode=self._mode,
         )
         obs = self._encode_obs()
         return obs, {}
@@ -147,7 +153,7 @@ class DerivationGame(Game):
         prod = self._current_productions[action]
         self._deriv_state = self._deriv_state.apply(prod)
         self._current_productions = self._deriv_state.legal_productions(
-            self.n_sites
+            self.n_sites, mode=self._mode,
         )
 
         is_complete = self._deriv_state.is_terminal()
@@ -225,7 +231,8 @@ class DerivationGame(Game):
         Safe because AST nodes and Productions are frozen dataclasses,
         and step() replaces (rather than mutates) all mutable fields.
         """
-        new = DerivationGame(self.budget, self.n_sites, self.leaf_evaluator)
+        new = DerivationGame(self.budget, self.n_sites, self.leaf_evaluator,
+                             program_budget_mode=self._mode)
         new.unstash_state(self.stash_state())
         if self.obs is not None:
             new.obs = self.obs.copy()
