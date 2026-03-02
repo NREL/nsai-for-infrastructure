@@ -29,10 +29,11 @@ class Trainer:
                  n_games_per_train: int = 100,
                  n_past_iterations_to_train: Optional[int] = 20,
                  n_procs: Optional[int] = None,
-                 checkpoint_dir: str | Path = "checkpoints"):
+                 checkpoint_dir: str | Path = "checkpoints",
+                 use_tree_reuse: bool = False):
         """
         Initialize the Trainer.
-        
+
         Args:
             agent: Agent instance for playing games
             net: PolicyValueNet instance
@@ -40,6 +41,7 @@ class Trainer:
             n_past_iterations_to_train: How many past iterations to keep for training
             n_procs: Number of processes for multiprocessing
             checkpoint_dir: Directory to save checkpoints
+            use_tree_reuse: If True, use MCTS tree reuse across moves within each episode
         """
         self.agent = agent
         self.net = net
@@ -47,7 +49,8 @@ class Trainer:
         self.n_games_per_train = n_games_per_train
         self.n_past_iterations_to_train = n_past_iterations_to_train
         self.n_procs = n_procs
-        
+        self.use_tree_reuse = use_tree_reuse
+
         self.all_training_examples = []
         self.run_start_time = int(time.time())
         self.checkpoint_manager = CheckpointManager(checkpoint_dir)
@@ -77,10 +80,10 @@ class Trainer:
         # Before we start multiprocessing, we need to push the multiprocessing state to all relevant objects (like the agent and the game) to make sure they are in a consistent state across processes. After multiprocessing is done, we need to pop the multiprocessing state to restore the original state.
         mp_manager = MultiprocessingManager(self.agent.net, self)
         mp_manager.push()
-        multiprocessing_function = partial(
-            self.agent.play_for_experience,
-            self.game
-        )
+        play_fn = (self.agent.play_for_experience_reuse_tree
+                   if self.use_tree_reuse
+                   else self.agent.play_for_experience)
+        multiprocessing_function = partial(play_fn, self.game)
         
         try:
             arg_tuples = [

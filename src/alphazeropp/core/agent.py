@@ -149,6 +149,59 @@ class Agent:
             
         return collected_experience, cumulative_reward
     
+    def play_one_round_reuse_tree(self, game: Game, max_moves: int = 10_000,
+                                   random_seed: int | None = None, msg="",
+                                   add_noise: bool = True,
+                                   temperature_override: float | None = None):
+        """Play one round using a single MCTS tree reused across all moves.
+
+        Unlike play_one_round (which creates a fresh MCTS per move via policy()),
+        this method creates one MCTS at the start and reuses its tree across
+        all moves via perform_simulations_reuse() + advance_to().
+        """
+        mcts = MCTS(game.clone(), self.net, **self.mcts_params)
+        if temperature_override is not None:
+            mcts.temperature = temperature_override
+        rng = np.random.default_rng(random_seed)
+
+        collected_experience = []
+        collected_rewards = []
+        cumulative_reward = 0.0
+
+        for i in range(max_moves):
+            if msg: print(msg, f"at start of move {i+1}, obs is", mcts.game.obs)
+
+            move_probs = mcts.perform_simulations_reuse("", add_noise=add_noise)
+            assert len(move_probs.shape) == 1, "move_probs should be a flat array"
+
+            action_idx = rng.choice(len(move_probs), p=move_probs)
+            # Read obs from mcts.game (not a local var) because unstash_state
+            # may have replaced the game object reference.
+            collected_experience.append((mcts.game.obs.copy(), move_probs))
+
+            mcts.advance_to(action_idx)
+
+            reward = mcts.game.reward
+            terminated = mcts.game.terminated
+            truncated = mcts.game.truncated
+
+            collected_rewards.append(reward)
+            cumulative_reward += reward
+            if terminated or truncated:
+                break
+
+        # Calculate discounted rewards (same logic as play_one_round)
+        discounted_rewards = []
+        cumulative_reward = 0.0
+        for reward in reversed(collected_rewards):
+            cumulative_reward = reward + self.reward_discount * cumulative_reward
+            discounted_rewards.append(cumulative_reward)
+        discounted_rewards.reverse()
+
+        collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
+
+        return collected_experience, sum(collected_rewards)
+
     def play_for_experience(self, game: Game, id: int, reset_seed: int, interaction_seed,
                             add_noise: bool = True,
                             temperature_override: float | None = None):
@@ -161,3 +214,17 @@ class Agent:
         return self.play_one_round(current_game_state, random_seed=interaction_seed, msg="",
                                    add_noise=add_noise,
                                    temperature_override=temperature_override)
+
+    def play_for_experience_reuse_tree(self, game: Game, id: int, reset_seed: int, interaction_seed,
+                                        add_noise: bool = True,
+                                        temperature_override: float | None = None):
+        """Like play_for_experience but using tree reuse across moves."""
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.init()
+        current_game_state = game.clone()
+        current_game_state.reset_wrapper(seed=reset_seed)
+
+        return self.play_one_round_reuse_tree(current_game_state, random_seed=interaction_seed, msg="",
+                                               add_noise=add_noise,
+                                               temperature_override=temperature_override)

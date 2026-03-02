@@ -14,7 +14,8 @@ def entab(s, addl):
 class MCTSTreeNode():
     direct_reward: float  # Any direct reward from the Game for being in this state
     is_terminal_state: bool  # Whether this is an end state (terminated or truncated)
-    nn_policy: Any  # The result of the policy network for this state
+    nn_policy: Any  # The result of the policy network for this state (may be noise-mixed)
+    nn_policy_original: Any  # The original NN policy before noise injection, for re-injection on tree reuse
     nn_value: Any  # The result of the value network for this state
     action_mask: Any  # A bit vector of action validity for this state
     total_N: int  # Total number of visits to this node, should equal sum(action_N.values())
@@ -26,6 +27,7 @@ class MCTSTreeNode():
         self.is_terminal_state = is_terminal_state
 
         self.nn_policy = None
+        self.nn_policy_original = None
         self.nn_value = None
         self.action_mask = None
 
@@ -146,7 +148,87 @@ class MCTS():
         # print(probs)
         
         return probs
-        
+
+    def perform_simulations_reuse(self, msg, add_noise=False):
+        """Like perform_simulations, but designed for tree reuse across moves.
+
+        Key difference: noise injection uses nn_policy_original instead of checking
+        total_N == 0, so that Dirichlet noise is correctly applied to reused root
+        nodes that already have visit counts from prior searches.
+        """
+        mystate = self.game.hashable_obs
+        # Reset min-max Q stats at start of search over this move
+        self.q_min = float('inf')
+        self.q_max = float('-inf')
+
+        if msg: print(msg, "at start of perform_simulations_reuse, obs is", self.game.obs)
+
+        if self.n_simulations < 0:
+            if msg: print(msg, "n_simulations < 0, directly querying policy net")
+            counts, _, _ = self.query_net_masked(msg)
+        else:
+            # Check for root node existence and expand if needed
+            if mystate not in self.nodes:
+                if msg: print(msg, "Root node not found, expanding immediately")
+                old_game_state = self.game.stash_state()
+                self.search(entab(msg, ", root expand"))
+                self.game = self.game.unstash_state(old_game_state)
+
+            mynode = self.nodes[mystate]
+
+            # Noise injection for tree reuse: always restore from original policy
+            # then mix fresh noise, regardless of total_N.
+            if add_noise and mynode.nn_policy_original is not None:
+                if msg: print(msg, f"Adding Dirichlet Noise (tree reuse, alpha={self.dirichlet_alpha}, eps={self.dirichlet_epsilon})")
+                # Restore clean policy before mixing noise (prevents noise-on-noise)
+                mynode.nn_policy = mynode.nn_policy_original.copy()
+                noise = np.random.dirichlet([self.dirichlet_alpha] * len(mynode.nn_policy))
+
+                mask = mynode.action_mask
+                masked_noise = noise * mask
+                sum_noise = masked_noise.sum()
+                if sum_noise > 0:
+                    masked_noise /= sum_noise
+                    mynode.nn_policy = (1 - self.dirichlet_epsilon) * mynode.nn_policy + self.dirichlet_epsilon * masked_noise
+                else:
+                    warnings.warn("Dirichlet noise sum is zero after masking, skipping noise injection")
+
+            for i in range(self.n_simulations):
+                old_game_state = self.game.stash_state()
+                self.search(entab(msg, f", simulation {i+1}/{self.n_simulations}"))
+                self.game = self.game.unstash_state(old_game_state)
+                assert mystate == self.game.hashable_obs
+
+            mynode = self.nodes[mystate]
+
+            # Build counts array directly in the policy shape
+            counts = np.zeros_like(mynode.nn_policy)
+            for action, count in mynode.action_N.items():
+                counts[action] = count
+
+        if msg: print(msg, "mynode", mynode, "counts", counts)
+        # Numerically stable temperature scaling via log-space
+        nonzero = counts > 0
+        if nonzero.any():
+            log_counts = np.full_like(counts, -np.inf)
+            log_counts[nonzero] = np.log(counts[nonzero]) / self.temperature
+            log_counts -= log_counts.max()
+            probs = np.exp(log_counts)
+            probs /= probs.sum()
+        else:
+            probs = counts  # all zeros — caller will handle
+        return probs
+
+    def advance_to(self, action):
+        """Advance the MCTS root to the state reached by taking `action`.
+
+        Steps self.game forward. The new self.game.hashable_obs becomes the
+        implicit root for the next perform_simulations_reuse() call. The search
+        tree (self.nodes) is retained so the subtree below the chosen action
+        provides a warm start. No pruning of unreachable nodes is performed.
+        """
+        self.game.step_wrapper(action)
+
     def search(self, msg) -> float:
         # NOTE does not guarantee that self.game will be in the same state upon exit
         mystate = self.game.hashable_obs
@@ -175,6 +257,7 @@ class MCTS():
             
             mypolicy, myvalue, myaction_mask = self.query_net_masked(msg)
             mynode.nn_policy = mypolicy
+            mynode.nn_policy_original = mypolicy.copy()
             mynode.nn_value = myvalue
             mynode.action_mask = myaction_mask
             return myvalue
