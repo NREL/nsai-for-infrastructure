@@ -62,6 +62,7 @@ class LeafEvaluator:
         # Caching
         self._cache: dict[str, float] = {}
         self._full_cache: dict[str, dict] = {}
+        self._program_cache: dict[str, Program] = {}
 
         # Statistics
         self._eval_count = 0
@@ -83,6 +84,7 @@ class LeafEvaluator:
         value = self._compute_metric(metrics)
         self._cache[key] = value
         self._full_cache[key] = metrics
+        self._program_cache[key] = program
         return value
 
     def get_all_metrics(self, program: Program) -> dict:

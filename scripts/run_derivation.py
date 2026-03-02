@@ -189,24 +189,47 @@ def print_banner(cfg, exp_dir):
     metric = cfg.game.kwargs["metric"]
     total_programs = count_programs(n_sites, budget)
     max_prods = compute_max_productions(budget, n_sites)
-
-    print()
-    print("=" * 80)
-    print("  DerivationGame AlphaZero Training")
-    print(f"  Goal: Learn to synthesize BitString policies via grammar derivation.")
-    print(f"  Problem: N={n_sites} bits, budget L={budget}, "
-          f"{total_programs} possible programs")
     n_frozen = cfg.game.kwargs.get("n_frozen_states", 1)
     n_total = comb(n_sites, n_ones)
     optimal_reward = (n_sites - n_ones) / n_sites
+    all_ones = ", ".join(["1"] * n_sites)
+    example_init = ["0"] * n_sites
+    for j in range(n_ones):
+        example_init[j] = "1"
 
-    print(f"  Action space: Discrete({max_prods}) "
-          f"(max productions at any derivation step)")
-    print(f"  Frozen states: {n_frozen} of {n_total} possible "
+    print()
+    print("=" * 80)
+    print("  PROGRAM SYNTHESIS via AlphaZero")
+    print("=" * 80)
+    print()
+    print("  PROBLEM")
+    print(f"    Given a {n_sites}-bit string with {n_ones} ones and "
+          f"{n_sites - n_ones} zeros (e.g. [{', '.join(example_init)}]),")
+    print(f"    synthesize a program that flips bits to reach the all-ones "
+          f"state [{all_ones}].")
+    print()
+    print("    Programs are decision lists in a DSL of if/elif/else rules:")
+    print("      if IsZero(i):    -- test whether bit i is 0")
+    print("        Flip(i)        -- flip bit i")
+    print("      elif IsZero(j):  -- next rule")
+    print("        Flip(j)")
+    print("      else:")
+    print("        Flip(k)        -- default action")
+    print()
+    print(f"  SEARCH SPACE")
+    print(f"    Bitstring length:   N = {n_sites}")
+    print(f"    AST node budget:    L = {budget}")
+    print(f"    Possible programs:  {total_programs}")
+    print(f"    Max productions:    {max_prods} (action space per derivation step)")
+    print()
+    print(f"  EVALUATION")
+    print(f"    Frozen init states: {n_frozen} of {n_total} "
           f"(C({n_sites},{n_ones}) with {n_ones} ones)")
-    print(f"  Leaf evaluation: {metric}")
-    print(f"  Optimal reward: {optimal_reward:.4f} = "
+    print(f"    Metric:             {metric}")
+    print(f"    Optimal reward:     {optimal_reward:.4f} = "
           f"({n_sites}-{n_ones})/{n_sites}")
+    print(f"    A program \"solves\" a state if it reaches [{all_ones}].")
+    print()
     print(f"  Experiment dir: {exp_dir}/")
     print()
     print("  Output legend:")
@@ -279,7 +302,8 @@ def print_iteration_header(i, total):
 def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats,
                             best_program_str, best_metrics):
     """Print compact iteration summary with best program info."""
-    train_rec = trainer_stats.to_list()[-1] if trainer_stats.to_list() else {}
+    train_recs = [r for r in trainer_stats.to_list() if "train_loss" in r]
+    train_rec = train_recs[-1] if train_recs else {}
     eval_rec = evaluator_stats.to_list()[-1] if evaluator_stats.to_list() else {}
 
     loss = train_rec.get("train_loss", float("nan"))
@@ -316,11 +340,93 @@ def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats,
 
 
 def extract_best_program(leaf_eval):
-    """Extract the best program from LeafEvaluator's cache."""
+    """Extract the best program from LeafEvaluator's cache.
+
+    Returns:
+        (prog_str, prog_ast, prog_metrics, prog_value) or
+        (None, None, None, -inf) if cache is empty.
+    """
     if not leaf_eval._cache:
-        return None, None, float("-inf")
+        return None, None, None, float("-inf")
     best_key = max(leaf_eval._cache, key=leaf_eval._cache.get)
-    return best_key, leaf_eval._full_cache[best_key], leaf_eval._cache[best_key]
+    return (
+        best_key,
+        leaf_eval._program_cache[best_key],
+        leaf_eval._full_cache[best_key],
+        leaf_eval._cache[best_key],
+    )
+
+
+def print_best_program_traces(program, metrics, leaf_eval, max_traces=5):
+    """Show the best program and step-by-step traces on frozen states."""
+    from alphazeropp.instances.bitstring.dsl.interpreter import (
+        run_policy_episode, format_trace,
+    )
+
+    n_sites = leaf_eval.n_sites
+    n_episodes = metrics.get("n_episodes", 1)
+    sr = metrics.get("solve_rate", 0)
+    ar = metrics.get("avg_reward", 0)
+    avg_steps = metrics.get("avg_steps", 0)
+    avg_ops = metrics.get("avg_ops", 0)
+
+    print()
+    print("=" * 80)
+    print("  BEST PROGRAM FOUND")
+    print("=" * 80)
+    print()
+
+    # Pretty-print the program
+    print("  Program:")
+    for line in program.pretty().split("\n"):
+        print(f"    {line}")
+    print()
+    print(f"  AST nodes: {program.node_count()}")
+    print()
+
+    # Aggregate metrics
+    print("  Aggregate metrics across frozen initial states:")
+    if n_episodes == 1:
+        solved_str = "Yes" if sr >= 1.0 else "No"
+        print(f"    Solved:          {solved_str}")
+    else:
+        n_solved = int(sr * n_episodes)
+        print(f"    Solve rate:      {n_solved}/{n_episodes} ({sr:.1%})")
+    print(f"    Avg reward:      {ar:+.4f}")
+    print(f"    Avg steps:       {avg_steps:.1f}")
+    print(f"    Avg interp ops:  {avg_ops:.1f}")
+    print()
+
+    # Run on frozen states and show traces
+    frozen_states = leaf_eval.frozen_states
+    n_to_show = min(len(frozen_states), max_traces)
+
+    print(f"  Step-by-step execution on {n_to_show} frozen initial "
+          f"state{'s' if n_to_show != 1 else ''}:")
+    print("-" * 80)
+
+    for i, x0 in enumerate(frozen_states[:n_to_show]):
+        env = leaf_eval.game_config.make_env(n_sites, frozen_states=[x0])
+        env.reset()
+        result = run_policy_episode(env, program, x0=x0)
+
+        if i == 0:
+            # Full trace for the first state
+            print(format_trace(result, program=program))
+        else:
+            # Compact summary for subsequent states
+            state_str = "[" + ", ".join(str(int(b)) for b in x0) + "]"
+            status = "SOLVED" if result.solved else "NOT SOLVED"
+            print(f"  {state_str} -> {status} "
+                  f"in {result.total_env_steps} steps, "
+                  f"reward={result.cumulative_reward:+.4f}")
+
+    if len(frozen_states) > max_traces:
+        print(f"  ... and {len(frozen_states) - max_traces} more states "
+              f"(not shown)")
+
+    print("=" * 80)
+    print()
 
 
 def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats, best_metrics):
@@ -360,8 +466,11 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
         print("[Warning] matplotlib/pandas not installed. Skipping plot.")
         return
 
-    trainer_history = (trainer_stats_manager.to_list()
-                       if trainer_stats_manager else [])
+    trainer_history = [
+        entry for entry in (trainer_stats_manager.to_list()
+                            if trainer_stats_manager else [])
+        if "train_loss" in entry
+    ]
     evaluator_history = (evaluator_stats_manager.to_list()
                          if evaluator_stats_manager else [])
     max_len = max(len(trainer_history), len(evaluator_history), len(program_log))
@@ -504,6 +613,7 @@ def main():
 
     # Track best program across all iterations
     best_program_str = None
+    best_program_ast = None
     best_program_metrics = None
     best_program_value = float("-inf")
     program_log = []
@@ -516,10 +626,11 @@ def main():
         score, accepted = gated_trainer.train_iteration()
 
         # Extract best program from leaf_eval cache
-        prog_str, prog_metrics, prog_value = extract_best_program(leaf_eval)
+        prog_str, prog_ast, prog_metrics, prog_value = extract_best_program(leaf_eval)
         if prog_str is not None and prog_value > best_program_value:
             best_program_value = prog_value
             best_program_str = prog_str
+            best_program_ast = prog_ast
             best_program_metrics = prog_metrics
 
         program_log.append({
@@ -574,23 +685,19 @@ def main():
         best_program_metrics,
     )
 
-    print(f"\nTraining complete. Results saved to: {exp_dir}/")
+    # Best program explanation with step-by-step traces
+    if best_program_ast is not None:
+        print_best_program_traces(
+            best_program_ast, best_program_metrics, leaf_eval,
+        )
+
+    print(f"Training complete. Results saved to: {exp_dir}/")
     print(f"  Config:       {exp_dir / 'config.json'}")
     print(f"  Plot:         {final_plot}")
     print(f"  Train log:    {exp_dir / 'train_stats.jsonl'}")
     print(f"  Eval log:     {exp_dir / 'eval_stats.jsonl'}")
     print(f"  Program log:  {exp_dir / 'program_log.jsonl'}")
-    if best_program_str:
-        print(f"\n  Best program: {best_program_str}")
-        sr = best_program_metrics.get("solve_rate", 0)
-        ar = best_program_metrics.get("avg_reward", 0)
-        n_episodes = best_program_metrics.get("n_episodes", 1)
-        if n_episodes == 1:
-            solved_str = "Solved" if sr >= 1.0 else "Not solved"
-            print(f"  {solved_str}, Avg reward: {ar:+.4f}")
-        else:
-            print(f"  Solve rate: {sr:.1%}, Avg reward: {ar:+.4f}")
-        print(f"  Programs evaluated: {leaf_eval.stats()['unique_programs']}")
+    print(f"  Programs evaluated: {leaf_eval.stats()['unique_programs']}")
 
 
 if __name__ == "__main__":
