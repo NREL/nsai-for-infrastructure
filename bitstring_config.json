@@ -1,0 +1,49 @@
+{
+  "game": {
+    "game_cls": "<callable: alphazeropp.instances.bitstring.game.BitStringGame>",
+    "kwargs": {
+      "n_sites": 10,
+      "bit_flip": true,
+      "sparse_reward": true
+    }
+  },
+  "net": {
+    "net_cls": "<callable: alphazeropp.instances.bitstring.network.BitStringPolicyValueNet>",
+    "kwargs": {
+      "n_sites": 10
+    }
+  },
+  "agent": {
+    "mcts_params": {
+      "n_simulations": 120,
+      "temperature": 1.0,
+      "c_exploration": 1.5,
+      "dirichlet_alpha": 0.3,
+      "dirichlet_epsilon": 0.25
+    },
+    "reward_discount": 1.0,
+    "external_policy": null,
+    "random_seeds": {
+      "mcts": 43,
+      "train": 47,
+      "eval": 23,
+      "external_policy": 68
+    }
+  },
+  "trainer": {
+    "n_games_per_train": 100,
+    "n_past_iterations_to_train": 5,
+    "n_procs": 8,
+    "checkpoint_dir": "checkpoints"
+  },
+  "evaluator": {
+    "n_games": 20,
+    "n_procs": 8
+  },
+  "run": {
+    "n_iterations": 100,
+    "accept_threshold": 0.55,
+    "plot_every": 5,
+    "plot_path": "bitstring_training_metrics.png"
+  }
+}
