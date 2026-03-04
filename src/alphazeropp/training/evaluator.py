@@ -51,11 +51,11 @@ class Evaluator:
         new_game = base_game.clone()
         results = {}
         
-        old_trajectory, old_cumulative_reward = old_agent.play_one_round(
+        old_trajectory, old_cumulative_reward, _ = old_agent.play_one_round(
             game=old_game, random_seed=mcts_seed,
             add_noise=False, temperature_override=EVAL_TEMPERATURE,
         )
-        new_trajectory, new_cumulative_reward = new_agent.play_one_round(
+        new_trajectory, new_cumulative_reward, _ = new_agent.play_one_round(
             game=new_game, random_seed=mcts_seed,
             add_noise=False, temperature_override=EVAL_TEMPERATURE,
         )

@@ -115,6 +115,7 @@ class Agent:
 
         collected_experience = []
         collected_rewards = [] # we seperately store rewards, because we want to calculate discounted rewards at the end of the episode.
+        step_infos = []
         cumulative_reward = 0.0
         for i in range(max_moves):
             if msg: print(msg, f"at start of move {i+1}, obs is", current_game_state.obs)
@@ -128,14 +129,15 @@ class Agent:
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
             collected_experience.append((current_game_state.obs.copy(), move_probs)) # So the collected experience is a list of ((obs, move_probs), action_idx) tuples.
-            
-            _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
-            
+
+            _, reward, terminated, truncated, info = current_game_state.step_wrapper(action_idx)
+            step_infos.append(info)
+
             collected_rewards.append(reward) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
             cumulative_reward += reward
             if terminated or truncated:
                 break
-        
+
         # Now we calculate discounted rewards and combine them with the observations and move_probs to form the final experience tuples.
         discounted_rewards = []
         cumulative_reward = 0.0
@@ -143,11 +145,11 @@ class Agent:
             cumulative_reward = reward + self.reward_discount * cumulative_reward
             discounted_rewards.append(cumulative_reward)
         discounted_rewards.reverse() # Now discounted_rewards is in the same order as collected_experience
-        
+
         collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
-        
-            
-        return collected_experience, cumulative_reward
+
+
+        return collected_experience, cumulative_reward, step_infos
     
     def play_one_round_reuse_tree(self, game: Game, max_moves: int = 10_000,
                                    random_seed: int | None = None, msg="",
@@ -166,6 +168,7 @@ class Agent:
 
         collected_experience = []
         collected_rewards = []
+        step_infos = []
         cumulative_reward = 0.0
 
         for i in range(max_moves):
@@ -184,6 +187,7 @@ class Agent:
             reward = mcts.game.reward
             terminated = mcts.game.terminated
             truncated = mcts.game.truncated
+            step_infos.append(mcts.game.info)
 
             collected_rewards.append(reward)
             cumulative_reward += reward
@@ -200,7 +204,7 @@ class Agent:
 
         collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
 
-        return collected_experience, sum(collected_rewards)
+        return collected_experience, sum(collected_rewards), step_infos
 
     def play_for_experience(self, game: Game, id: int, reset_seed: int, interaction_seed,
                             add_noise: bool = True,

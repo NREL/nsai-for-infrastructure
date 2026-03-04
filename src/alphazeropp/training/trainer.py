@@ -52,6 +52,7 @@ class Trainer:
         self.use_tree_reuse = use_tree_reuse
 
         self.all_training_examples = []
+        self._last_diagnostics: list = []
         self.run_start_time = int(time.time())
         self.checkpoint_manager = CheckpointManager(checkpoint_dir)
         self.statistics_manager = StatisticsManager(self.run_start_time)
@@ -138,17 +139,18 @@ class Trainer:
         
         return flat_examples
     
-    def _train_network(self, flat_examples: list):
+    def _train_network(self, flat_examples: list, avg_reward: float = 0.0):
         """
         Train the network on collected examples.
-        
+
         Args:
             flat_examples: Flattened list of (state, (policy, reward)) tuples
+            avg_reward: Average cumulative reward from self-play games
         """
         start_time = time.time()
-        
+
         _, train_batch_losses, train_losses, policy_losses, value_losses = self.net.train(flat_examples)
-        
+
         elapsed = time.time() - start_time
         logger.debug(f"Training completed in {elapsed:.2f} seconds")
         statistics = {
@@ -156,6 +158,7 @@ class Trainer:
             "train_loss_policy": np.mean(policy_losses),
             "train_loss_value": np.mean(value_losses),
             "num_examples": len(flat_examples),
+            "avg_reward": avg_reward,
         }
         self.statistics_manager.record(statistics)
     
@@ -164,20 +167,30 @@ class Trainer:
         Run a single training iteration: collect examples and train.
         """
         start_time = time.time()
-        
+
         # Step 1: Collect training examples
         train_example_sets = self._collect_training_examples()
 
         experience = []
+        rewards = []
+        all_diagnostics = []
         for example_set in train_example_sets:
-            experience.append(example_set[0]) # we get rid of the culumative return term
-        
+            experience.append(example_set[0])
+            rewards.append(example_set[1])
+            # Step infos may be present as 3rd element (from diagnostics)
+            if len(example_set) > 2:
+                all_diagnostics.append(example_set[2])
+
+        self._last_diagnostics = all_diagnostics
+
+        avg_reward = float(np.mean(rewards)) if rewards else 0.0
+
         # Step 2: Process training examples
         flat_examples = self._process_training_examples(experience)
-        
+
         # Step 3: Train network
-        self._train_network(flat_examples)
-        
+        self._train_network(flat_examples, avg_reward=avg_reward)
+
         elapsed = time.time() - start_time
         logger.debug(f"Training iteration completed in {elapsed:.2f} seconds")
     

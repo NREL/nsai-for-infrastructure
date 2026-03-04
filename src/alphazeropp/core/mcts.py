@@ -33,9 +33,7 @@ class MCTSTreeNode():
 
         self.total_N = 0
         self.action_Q = {}
-        self.action_Q = {}
         self.action_N = {}
-        self.q_u_history = []  # Log of (q, u) pairs for diagnosis
 
 class MCTS():
     game: Game
@@ -318,39 +316,52 @@ class MCTS():
         return mypolicy, myvalue, myaction_mask
     
     def calc_masked_ucbs(self, mynode: MCTSTreeNode, msg) -> np.ndarray:
-        # TODO PERF this was super optimized and then the implementation changed for multidimensional actions, need to reoptimize
-        # Get all valid action indices as tuples
-        valid_actions = list(zip(*np.nonzero(mynode.action_mask)))
+        mask = mynode.action_mask
+        policy = mynode.nn_policy
 
-        # Initialize UCB array with -inf for invalid actions
-        all_ucbs = np.full(mynode.nn_policy.shape, -np.inf)
-        
-        # Calculate UCB for each valid action
-        # Calculate UCB for each valid action
+        # Fast vectorized path for 1D action spaces
+        if mask.ndim == 1:
+            size = mask.shape[0]
+            q_arr = np.zeros(size)
+            n_arr = np.zeros(size)
+            for action, q in mynode.action_Q.items():
+                q_arr[action] = q
+            for action, n in mynode.action_N.items():
+                n_arr[action] = n
+
+            # Normalize Q using global min/max seen during search
+            if self.q_min == float('inf') or self.q_max == float('-inf'):
+                q_norm = np.zeros(size)
+            elif self.q_max > self.q_min:
+                q_norm = (q_arr - self.q_min) / (self.q_max - self.q_min)
+            else:
+                q_norm = np.full(size, 0.5)
+
+            # UCB = normalized_Q + c * P(a) * sqrt(total_N) / (1 + N(a))
+            sqrt_total = np.sqrt(mynode.total_N + EPS)
+            u = self.c_exploration * policy * sqrt_total / (1 + n_arr)
+            ucbs = q_norm + u
+
+            # Mask invalid actions to -inf
+            all_ucbs = np.full(size, -np.inf)
+            valid = mask.astype(bool)
+            all_ucbs[valid] = ucbs[valid]
+            return all_ucbs
+
+        # Fallback for multi-dimensional action spaces
+        valid_actions = list(zip(*np.nonzero(mask)))
+        all_ucbs = np.full(policy.shape, -np.inf)
         for action in valid_actions:
             q = mynode.action_Q.get(action, 0.0)
             n = mynode.action_N.get(action, 0)
-            
-            # Normalize Q using global min/max seen during search
             if self.q_min == float('inf') or self.q_max == float('-inf'):
                 q_normalized = 0.0
             elif self.q_max > self.q_min:
                 q_normalized = (q - self.q_min) / (self.q_max - self.q_min)
             else:
-                # q_max == q_min
                 q_normalized = 0.5
-            
-            # Use normalized Q for UCB
-            u_val = self.c_exploration * mynode.nn_policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
-            ucb = q_normalized + u_val
-            all_ucbs[action] = ucb
-            
-            mynode.q_u_history.append((q, u_val))
-            
-            if msg:
-                print(msg, "calc_ucb for action", action, "action Q", q, "c_exploration", self.c_exploration, "nn policy", mynode.nn_policy[action], "total N", mynode.total_N, "action N", n)
-                print(msg, "ucb result", ucb)
-        
+            u_val = self.c_exploration * policy[action] * np.sqrt(mynode.total_N + EPS) / (1 + n)
+            all_ucbs[action] = q_normalized + u_val
         return all_ucbs
 
     def update_edge(self, mynode: MCTSTreeNode, action: int, reward: float):

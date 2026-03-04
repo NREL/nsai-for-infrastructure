@@ -65,10 +65,10 @@ class GatedTrainer:
             eval_record.get("old_rewards_mean", 0),
         )
 
-        # 7. Record gate stats on trainer's statistics manager
-        self.trainer.statistics_manager.record({
-            "gate_score": score,
-            "gate_accepted": int(accepted),
-        })
+        # 7. Merge gate stats into existing training record (avoid creating
+        #    a separate record which would misalign with evaluator stats).
+        if self.trainer.statistics_manager._records:
+            self.trainer.statistics_manager._records[-1]["gate_score"] = score
+            self.trainer.statistics_manager._records[-1]["gate_accepted"] = int(accepted)
 
         return score, accepted
