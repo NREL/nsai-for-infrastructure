@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
     Condition, Program,
 )
@@ -190,6 +190,7 @@ def run_policy_episode(
     program: Program,
     x0: Optional[np.ndarray] = None,
     verbose: bool = False,
+    is_solved: Optional[Callable[[np.ndarray], bool]] = None,
 ) -> EpisodeResult:
     """Run the DSL program as a policy on the environment.
 
@@ -255,7 +256,8 @@ def run_policy_episode(
         total_interp_ops=total_interp,
         final_state=obs.copy(),
         cumulative_reward=cumulative_reward,
-        solved=bool(np.all(obs == 1.0)),
+        solved=(is_solved(obs) if is_solved is not None
+                else bool(np.all(obs == 1.0))),
     )
 
     if verbose:

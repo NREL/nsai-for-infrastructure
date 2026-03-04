@@ -14,13 +14,12 @@ Supports multiple evaluation metrics:
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Callable, Optional, Sequence
 
 import numpy as np
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import Program
-from alphazeropp.instances.bitstring.dsl.interpreter import run_policy_episode
-from alphazeropp.instances.bitstring.dsl.game_config import GameConfig
+from alphazeropp.synthesis.ast_nodes import Program
+from alphazeropp.synthesis.interpreter import run_policy_episode
 
 
 VALID_METRICS = ("avg_reward", "solve_rate", "penalized_reward", "weighted")
@@ -38,16 +37,18 @@ class LeafEvaluator:
         self,
         n_sites: int,
         frozen_states: Sequence[np.ndarray],
-        game_config: GameConfig,
+        game_config,
         metric: str = "avg_reward",
         penalty_lambda: float = 0.1,
         blend_alpha: float = 0.5,
+        is_solved: Optional[Callable[[np.ndarray], bool]] = None,
     ):
         if metric not in VALID_METRICS:
             raise ValueError(
                 f"Unknown metric {metric!r}, must be one of {VALID_METRICS}"
             )
         self.n_sites = n_sites
+        self.is_solved = is_solved
         self.frozen_states = list(frozen_states)
         self.game_config = game_config
         self.metric = metric
@@ -121,7 +122,8 @@ class LeafEvaluator:
                 self.n_sites, frozen_states=[x0]
             )
             env.reset()
-            result = run_policy_episode(env, program)
+            result = run_policy_episode(env, program,
+                                               is_solved=self.is_solved)
             if result.solved:
                 solved_count += 1
             total_steps += result.total_env_steps

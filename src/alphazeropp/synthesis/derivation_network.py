@@ -26,8 +26,12 @@ logger = logging.getLogger(__name__)
 class DerivationTransformerModel(nn.Module):
     """Transformer encoder that reads a DerivationGame observation.
 
-    Input:  flat obs tensor of shape (batch, 2 * budget).
+    Input:  flat obs tensor of shape (batch, 2 * budget [+ extra_features]).
     Output: (policy_logits: (batch, action_size), value: (batch,)).
+
+    When ``extra_features > 0`` (e.g. for FactoredDerivationGame), the
+    last ``extra_features`` floats of the observation are projected and
+    added to the CLS token embedding before the transformer.
     """
 
     def __init__(
@@ -39,10 +43,12 @@ class DerivationTransformerModel(nn.Module):
         n_heads: int = 4,
         n_layers: int = 2,
         dropout: float = 0.1,
+        extra_features: int = 0,
     ):
         super().__init__()
         self.budget = budget
         self.action_size = action_size
+        self.extra_features = extra_features
         seq_len = budget  # one token per AST slot
 
         # --- embeddings ---
@@ -50,6 +56,10 @@ class DerivationTransformerModel(nn.Module):
         self.param_proj = nn.Linear(1, d_model)
         self.pos_emb = nn.Embedding(num_embeddings=seq_len + 1, embedding_dim=d_model)
         self.cls_emb = nn.Parameter(torch.zeros(d_model))
+
+        # --- extra features projection (for factored game phase info) ---
+        if extra_features > 0:
+            self.extra_proj = nn.Linear(extra_features, d_model)
 
         # --- transformer ---
         encoder_layer = nn.TransformerEncoderLayer(
@@ -71,9 +81,13 @@ class DerivationTransformerModel(nn.Module):
         B = x.shape[0]
         L = self.budget
 
+        # Split AST obs from extra features
+        ast_obs = x[:, :2 * L]
+        extra = x[:, 2 * L:] if self.extra_features > 0 else None
+
         # Parse obs into (type_id, param) pairs
-        type_ids = x[:, 0::2].long()   # (B, L)
-        params = x[:, 1::2]            # (B, L)
+        type_ids = ast_obs[:, 0::2].long()   # (B, L)
+        params = ast_obs[:, 1::2]            # (B, L)
 
         # Padding mask: True = ignored.  CLS is never masked.
         pad_mask_tokens = (type_ids == 0)
@@ -85,9 +99,12 @@ class DerivationTransformerModel(nn.Module):
         param_e = self.param_proj(params.unsqueeze(-1))  # (B, L, d)
         token_emb = type_e + param_e                # (B, L, d)
 
-        # Prepend CLS
-        cls = self.cls_emb.unsqueeze(0).expand(B, -1).unsqueeze(1)  # (B, 1, d)
-        seq = torch.cat([cls, token_emb], dim=1)    # (B, L+1, d)
+        # Prepend CLS (with extra features added if present)
+        cls = self.cls_emb.unsqueeze(0).expand(B, -1)  # (B, d)
+        if extra is not None:
+            cls = cls + self.extra_proj(extra)          # (B, d)
+        cls = cls.unsqueeze(1)                          # (B, 1, d)
+        seq = torch.cat([cls, token_emb], dim=1)        # (B, L+1, d)
 
         # Positional embeddings
         positions = torch.arange(L + 1, device=x.device)
@@ -133,6 +150,7 @@ class DerivationPolicyValueNet(TorchPolicyValueNet):
         n_heads: int = 4,
         n_layers: int = 2,
         dropout: float = 0.1,
+        extra_features: int = 0,
         training_params: dict = {},
         random_seed: int | None = None,
         device=None,
@@ -149,6 +167,7 @@ class DerivationPolicyValueNet(TorchPolicyValueNet):
             n_heads=n_heads,
             n_layers=n_layers,
             dropout=dropout,
+            extra_features=extra_features,
         )
         self.budget = budget
         self.action_size = action_size
@@ -163,7 +182,8 @@ class DerivationPolicyValueNet(TorchPolicyValueNet):
     # -- predict ---------------------------------------------------------------
 
     def predict(self, state):
-        self.model.cpu()
+        if next(self.model.parameters()).device.type != 'cpu':
+            self.model.cpu()
         nn_input = torch.tensor(state, dtype=torch.float32).reshape(1, -1)
         with torch.no_grad():
             policy_logits, value = self.model(nn_input)

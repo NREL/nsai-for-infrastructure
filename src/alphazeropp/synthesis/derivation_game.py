@@ -20,17 +20,17 @@ import numpy as np
 
 from alphazeropp.core.game import Game
 from alphazeropp.core.policy_value_net import PolicyValueNet
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     ProgramHole, ConditionHole,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import (
+from alphazeropp.synthesis.derivation import (
     DerivationState, Production,
     _program_productions, _condition_productions,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +78,8 @@ def _preorder_items(node: Any) -> list[tuple[float, float]]:
 
 def compute_max_productions(
     budget: int, n_sites: int, mode: str = "exact",
+    allow_and: bool = True, allow_not: bool = True,
+    n_actions: int | None = None,
 ) -> int:
     """Compute the maximum number of legal productions at any derivation step.
 
@@ -87,11 +89,12 @@ def compute_max_productions(
     """
     max_prods = 0
     for k in range(2, budget + 1):
-        n = len(_program_productions(k, n_sites, mode))
+        n = len(_program_productions(k, n_sites, mode, n_actions=n_actions))
         if n > max_prods:
             max_prods = n
     for k in range(1, budget + 1):
-        n = len(_condition_productions(k, n_sites, mode=mode))
+        n = len(_condition_productions(k, n_sites, mode=mode,
+                allow_and=allow_and, allow_not=allow_not))
         if n > max_prods:
             max_prods = n
     return max_prods
@@ -121,15 +124,25 @@ class DerivationGame(Game):
         n_sites: int,
         leaf_evaluator: LeafEvaluator,
         program_budget_mode: str = "exact",
+        allow_and: bool = True,
+        allow_not: bool = True,
+        n_actions: int | None = None,
+        one_hot_groups: list[list[int]] | None = None,
     ):
         super().__init__()
         self.budget = budget
         self.n_sites = n_sites
         self.leaf_evaluator = leaf_evaluator
         self._mode = program_budget_mode
+        self._allow_and = allow_and
+        self._allow_not = allow_not
+        self._n_actions = n_actions
+        self._one_hot_groups = one_hot_groups
 
         self._max_productions = compute_max_productions(
             budget, n_sites, mode=program_budget_mode,
+            allow_and=allow_and, allow_not=allow_not,
+            n_actions=n_actions,
         )
         self.action_space = spaces.Discrete(self._max_productions)
         self.observation_space = spaces.Box(
@@ -141,20 +154,25 @@ class DerivationGame(Game):
         self._deriv_state: DerivationState | None = None
         self._current_productions: list[Production] = []
 
+    def _legal_productions(self) -> list[Production]:
+        """Get legal productions for current state with all grammar params."""
+        return self._deriv_state.legal_productions(
+            self.n_sites, mode=self._mode,
+            allow_and=self._allow_and, allow_not=self._allow_not,
+            n_actions=self._n_actions,
+            one_hot_groups=self._one_hot_groups,
+        )
+
     def reset(self, **kwargs) -> Tuple[np.ndarray, dict]:
         self._deriv_state = DerivationState.initial(self.budget)
-        self._current_productions = self._deriv_state.legal_productions(
-            self.n_sites, mode=self._mode,
-        )
+        self._current_productions = self._legal_productions()
         obs = self._encode_obs()
         return obs, {}
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, dict]:
         prod = self._current_productions[action]
         self._deriv_state = self._deriv_state.apply(prod)
-        self._current_productions = self._deriv_state.legal_productions(
-            self.n_sites, mode=self._mode,
-        )
+        self._current_productions = self._legal_productions()
 
         is_complete = self._deriv_state.is_terminal()
         # Dead end: holes remain but no legal productions (e.g., ProgramHole
@@ -163,12 +181,20 @@ class DerivationGame(Game):
 
         terminated = is_complete
         truncated = is_dead_end
-        info: dict[str, Any] = {"production": prod}
+        info: dict[str, Any] = {
+            "production": prod,
+            "hole_type": prod.hole_kind,
+            "hole_budget": prod.hole_budget,
+            "branching": len(self._current_productions),
+            "is_complete": is_complete,
+            "is_dead_end": is_dead_end,
+        }
 
         if is_complete:
             program = self._deriv_state.to_program()
             reward = self.leaf_evaluator(program)
             info["program"] = program
+            info["leaf_value"] = reward
         elif is_dead_end:
             reward = 0.0
             info["dead_end"] = True
@@ -232,7 +258,11 @@ class DerivationGame(Game):
         and step() replaces (rather than mutates) all mutable fields.
         """
         new = DerivationGame(self.budget, self.n_sites, self.leaf_evaluator,
-                             program_budget_mode=self._mode)
+                             program_budget_mode=self._mode,
+                             allow_and=self._allow_and,
+                             allow_not=self._allow_not,
+                             n_actions=self._n_actions,
+                             one_hot_groups=self._one_hot_groups)
         new.unstash_state(self.stash_state())
         if self.obs is not None:
             new.obs = self.obs.copy()

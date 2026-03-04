@@ -10,14 +10,16 @@ Provides:
 from __future__ import annotations
 
 import copy
+import functools
+import dataclasses
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
     Condition, Program,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     ProgramHole, ConditionHole,
     enumerate_conditions, count_conditions,
     enumerate_programs, count_programs,
@@ -38,11 +40,17 @@ class Production:
         hole_budget: budget of the hole being expanded.
         result: the replacement subtree (may contain new holes).
         label: human-readable description (e.g., "P(5) -> Ite(C(1), Flip(0), P(2))").
+        macro_key: optional template key for macro productions. When set,
+            ``_structure_key()`` in the factored game uses this instead of
+            inspecting ``result``.  All variants of the same macro share a
+            key (e.g. ``("PickRule",)``), so they group into one
+            StructureTemplate with ``needs_parameter=True``.
     """
     hole_kind: str
     hole_budget: int
     result: Any
     label: str
+    macro_key: tuple | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -149,13 +157,138 @@ def _partial_pretty(node: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# One-hot satisfiability helpers
+# ---------------------------------------------------------------------------
+
+def _find_leftmost_hole_with_context(
+    node: Any,
+    negated: bool = False,
+    and_siblings: list | None = None,
+) -> tuple | None:
+    """Find leftmost hole and its And-conjunction context.
+
+    Like ``_find_leftmost_hole`` but also tracks:
+      - *and_siblings*: complete condition subtrees that are AND-conjoined
+        with the hole (accumulated from the left children of ancestor And
+        nodes along a purely conjunctive path).
+      - *negated*: True when the hole is under an odd number of Not
+        ancestors within the current condition tree.
+
+    De Morgan correctness: when entering an And with *negated=True*
+    (effective disjunction), siblings are **cleared** — they no longer
+    constrain the hole.
+
+    Returns ``(hole, and_siblings, negated)`` or ``None``.
+    """
+    if and_siblings is None:
+        and_siblings = []
+
+    if isinstance(node, (ProgramHole, ConditionHole)):
+        return (node, list(and_siblings), negated)
+
+    if isinstance(node, Ite):
+        # Each Ite branch starts a fresh condition context
+        result = _find_leftmost_hole_with_context(node.cond, False, [])
+        if result is not None:
+            return result
+        # action (Flip) has no holes; skip to else_prog
+        return _find_leftmost_hole_with_context(node.else_prog, False, [])
+
+    if isinstance(node, Default):
+        return None  # action (Flip) leaf
+
+    if isinstance(node, Not):
+        return _find_leftmost_hole_with_context(
+            node.child, not negated, and_siblings,
+        )
+
+    if isinstance(node, And):
+        if negated:
+            # Effective disjunction (De Morgan): clear sibling context
+            result = _find_leftmost_hole_with_context(node.left, negated, [])
+            if result is not None:
+                return result
+            return _find_leftmost_hole_with_context(node.right, negated, [])
+        else:
+            # Real conjunction: left child becomes context for right
+            result = _find_leftmost_hole_with_context(
+                node.left, negated, and_siblings,
+            )
+            if result is not None:
+                return result
+            return _find_leftmost_hole_with_context(
+                node.right, negated, and_siblings + [node.left],
+            )
+
+    # Flip, IsZero: leaf nodes, no holes
+    return None
+
+
+def _extract_literals(cond: Any) -> set[tuple[int, bool]]:
+    """Extract simple (index, is_positive) literals from a complete condition.
+
+    - ``IsZero(j)``        → ``{(j, False)}``   (state[j] == 0)
+    - ``Not(IsZero(j))``   → ``{(j, True)}``    (state[j] != 0)
+    - ``And(l, r)``        → union of both sides
+    - Complex (e.g. ``Not(And(...))``) → ``set()``  (conservative: skip)
+    """
+    if isinstance(cond, IsZero):
+        return {(cond.index, False)}
+    if isinstance(cond, Not):
+        if isinstance(cond.child, IsZero):
+            return {(cond.child.index, True)}
+        return set()  # Not(And(...)) etc. — skip
+    if isinstance(cond, And):
+        return _extract_literals(cond.left) | _extract_literals(cond.right)
+    return set()
+
+
+def _one_hot_contradiction(
+    context_literals: set[tuple[int, bool]],
+    new_index: int,
+    new_positive: bool,
+    index_to_group: dict[int, int],
+) -> bool:
+    """Check if adding literal (new_index, new_positive) contradicts context.
+
+    Two contradiction types:
+      1. **Direct**: same index, opposite polarity (always unsatisfiable).
+      2. **One-hot**: two positive ("is at") literals in the same mutual-
+         exclusion group (e.g., at_loc is one-hot).
+    """
+    new_group = index_to_group.get(new_index)
+    for idx, pos in context_literals:
+        # Direct contradiction
+        if idx == new_index and pos != new_positive:
+            return True
+        # One-hot contradiction: two positive literals in same group
+        if pos and new_positive and new_group is not None:
+            if index_to_group.get(idx) == new_group and idx != new_index:
+                return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Production generation
 # ---------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=512)
 def _program_productions(
     budget: int, n_sites: int, mode: str = "exact",
+    n_actions: int | None = None,
+    max_condition_budget: int | None = None,
 ) -> list[Production]:
     """Generate all productions for a ProgramHole with given budget.
+
+    Args:
+        n_actions: Number of valid action indices for Flip. If None,
+            defaults to n_sites (all observation indices are valid actions).
+            For domains where n_actions < n_sites (e.g., Doors), this
+            restricts Flip(j) to valid env actions only.
+        max_condition_budget: If set, limits the condition budget ``i``
+            in Ite expansions to ``[1, max_condition_budget]``.  This
+            prunes Ite templates with unnecessarily large condition
+            subtrees (e.g., for Doors, useful conditions are ≤5 nodes).
 
     In exact mode, P(k) -> Default(Flip(j)) only at k == 2, and Ite
     expansions skip else_budgets with zero exact completions.
@@ -164,12 +297,13 @@ def _program_productions(
     termination), and all Ite expansions are valid (else_budget >= 2
     is guaranteed by loop bounds, and any P(m >= 2) can terminate).
     """
+    flip_range = n_actions if n_actions is not None else n_sites
     prods: list[Production] = []
 
     # Terminate: P(k) → Default(Flip(j))
     # Exact: only at k == 2.  Max: at any k >= 2.
     if (mode == "exact" and budget == 2) or (mode == "max" and budget >= 2):
-        for j in range(n_sites):
+        for j in range(flip_range):
             result = Default(Flip(j))
             prods.append(Production(
                 hole_kind="P", hole_budget=budget,
@@ -179,12 +313,15 @@ def _program_productions(
 
     # Expand: P(k) → Ite(C(i), Flip(j), P(k-2-i))  for k >= 5
     if budget >= 5:
-        for i in range(1, budget - 3):  # i in [1, k-4]
+        max_i = budget - 3  # original upper bound (exclusive): i in [1, k-4]
+        if max_condition_budget is not None:
+            max_i = min(max_i, max_condition_budget + 1)
+        for i in range(1, max_i):  # i in [1, min(k-4, cap)]
             else_budget = budget - 2 - i
             if mode == "exact" and count_programs(n_sites, else_budget) == 0:
                 continue  # Skip dead-end budgets (e.g., 3 and 4)
             # Max mode: else_budget >= 2 always (loop bounds guarantee it).
-            for j in range(n_sites):
+            for j in range(flip_range):
                 result = Ite(ConditionHole(i), Flip(j), ProgramHole(else_budget))
                 prods.append(Production(
                     hole_kind="P", hole_budget=budget,
@@ -195,9 +332,11 @@ def _program_productions(
     return prods
 
 
+@functools.lru_cache(maxsize=512)
 def _condition_productions(
     budget: int, n_sites: int, parent_is_not: bool = False,
     mode: str = "exact",
+    allow_and: bool = True, allow_not: bool = True,
 ) -> list[Production]:
     """Generate canonical productions for a ConditionHole with given budget.
 
@@ -206,6 +345,10 @@ def _condition_productions(
          the child of a ``Not``), suppress the ``Not(C(k-1))`` production.
       2. **And commutativity**: For ``And(C(i), C(j))``, restrict to
          ``i <= j`` (left budget <= right budget).
+
+    Grammar restriction flags:
+      - *allow_and*: If False, suppress all ``And(C(i), C(j))`` productions.
+      - *allow_not*: If False, suppress all ``Not(C(k-1))`` productions.
 
     In max mode, C(k) -> IsZero(j) at any k >= 1 (early termination),
     and the _ccnn dead-end guard for Not is bypassed (C(k-1,
@@ -226,7 +369,7 @@ def _condition_productions(
     # C(k) → Not(C(k-1))  — only if parent is NOT a Not.
     # Exact: also guard with _ccnn to prevent dead-end C(k-1, parent_is_not).
     # Max: _ccnn guard unnecessary (child can early-terminate to IsZero).
-    if budget >= 2 and not parent_is_not:
+    if allow_not and budget >= 2 and not parent_is_not:
         if mode == "max" or _ccnn(n_sites, budget - 1) > 0:
             child_budget = budget - 1
             result = Not(ConditionHole(child_budget, parent_is_not=True))
@@ -237,7 +380,7 @@ def _condition_productions(
             ))
 
     # C(k) → And(C(i), C(k-1-i))  — canonical: i <= k-1-i
-    if budget >= 3:
+    if allow_and and budget >= 3:
         for i in range(1, (budget - 1) // 2 + 1):
             right_budget = budget - 1 - i
             result = And(ConditionHole(i), ConditionHole(right_budget))
@@ -267,6 +410,7 @@ class DerivationState:
         program = state.to_program()
     """
     root: Any
+    _pretty_cache: str | None = dataclasses.field(default=None, repr=False, compare=False)
 
     @classmethod
     def initial(cls, budget: int) -> DerivationState:
@@ -283,17 +427,58 @@ class DerivationState:
 
     def legal_productions(
         self, n_sites: int, mode: str = "exact",
+        allow_and: bool = True, allow_not: bool = True,
+        n_actions: int | None = None,
+        one_hot_groups: list[list[int]] | None = None,
+        max_condition_budget: int | None = None,
     ) -> list[Production]:
-        """Get all legal productions for the leftmost hole."""
+        """Get all legal productions for the leftmost hole.
+
+        Args:
+            n_actions: Valid Flip range (passed to _program_productions).
+            one_hot_groups: Mutually-exclusive observation index groups.
+                When set, terminal IsZero productions that create one-hot
+                contradictions with existing And-siblings are filtered out.
+            max_condition_budget: Cap on condition budget in Ite templates
+                (passed to _program_productions).
+        """
         hole = self.leftmost_hole()
         if hole is None:
             return []
         if isinstance(hole, ProgramHole):
-            return _program_productions(hole.budget, n_sites, mode)
+            return _program_productions(hole.budget, n_sites, mode,
+                                        n_actions=n_actions,
+                                        max_condition_budget=max_condition_budget)
         elif isinstance(hole, ConditionHole):
-            return _condition_productions(
+            prods = _condition_productions(
                 hole.budget, n_sites, hole.parent_is_not, mode,
+                allow_and=allow_and, allow_not=allow_not,
             )
+            # Filter terminal IsZero productions against one-hot constraints
+            if one_hot_groups and prods:
+                ctx = _find_leftmost_hole_with_context(self.root)
+                if ctx is not None:
+                    _, and_siblings, negated = ctx
+                    if and_siblings:
+                        context_lits: set[tuple[int, bool]] = set()
+                        for sib in and_siblings:
+                            context_lits |= _extract_literals(sib)
+                        if context_lits:
+                            index_to_group: dict[int, int] = {}
+                            for gid, group in enumerate(one_hot_groups):
+                                for idx in group:
+                                    index_to_group[idx] = gid
+                            prods = [
+                                p for p in prods
+                                if not (
+                                    isinstance(p.result, IsZero)
+                                    and _one_hot_contradiction(
+                                        context_lits, p.result.index,
+                                        negated, index_to_group,
+                                    )
+                                )
+                            ]
+            return prods
         return []
 
     def apply(self, production: Production) -> DerivationState:
@@ -310,8 +495,10 @@ class DerivationState:
         return self.root
 
     def pretty(self) -> str:
-        """Pretty-print the partial AST, showing holes."""
-        return _partial_pretty(self.root)
+        """Pretty-print the partial AST, showing holes (cached)."""
+        if self._pretty_cache is None:
+            self._pretty_cache = _partial_pretty(self.root)
+        return self._pretty_cache
 
     def hole_count(self) -> int:
         """Count remaining holes."""

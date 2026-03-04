@@ -17,7 +17,7 @@ import functools
 from dataclasses import dataclass
 from typing import Union
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
     Condition, Program,
 )
