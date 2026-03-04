@@ -27,8 +27,8 @@ from pathlib import Path
 import numpy as np
 
 from alphazeropp.instances.bitstring.dsl.derivation_config import DerivationConfig
-from alphazeropp.instances.bitstring.dsl.derivation_game import compute_max_productions
-from alphazeropp.instances.bitstring.dsl.budget_grammar import count_programs
+from alphazeropp.synthesis.derivation_game import compute_max_productions
+from alphazeropp.synthesis.budget_grammar import count_programs
 from alphazeropp.training.gated_trainer import GatedTrainer
 
 

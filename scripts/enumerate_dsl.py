@@ -32,18 +32,18 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root / "src"))
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
     Program,
 )
-from alphazeropp.instances.bitstring.dsl.interpreter import (
+from alphazeropp.synthesis.interpreter import (
     eval_program, interp_ops, run_policy_episode, format_trace,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     enumerate_programs, count_programs, count_conditions,
     format_grammar_summary, format_grammar_debug,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import (
+from alphazeropp.synthesis.derivation import (
     DerivationState, trace_first_derivation,
 )
 from alphazeropp.instances.bitstring.dsl.game_config import (

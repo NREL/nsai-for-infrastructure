@@ -32,25 +32,25 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root / "src"))
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Ite, Default, Program,
 )
-from alphazeropp.instances.bitstring.dsl.interpreter import (
+from alphazeropp.synthesis.interpreter import (
     run_policy_episode, format_trace,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     count_programs, format_grammar_summary, enumerate_programs,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import (
+from alphazeropp.synthesis.derivation import (
     DerivationState, format_derivation_trace,
 )
 from alphazeropp.instances.bitstring.dsl.game_config import (
     GameConfig, all_initial_states,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import (
+from alphazeropp.synthesis.leaf_evaluator import (
     LeafEvaluator, VALID_METRICS,
 )
-from alphazeropp.instances.bitstring.dsl.derivation_game import (
+from alphazeropp.synthesis.derivation_game import (
     DerivationGame, UniformPolicyValueNet, compute_max_productions,
 )
 from alphazeropp.instances.bitstring.potentials import POTENTIAL_REGISTRY
@@ -430,7 +430,7 @@ def print_derivation_trace(program: Program, n_sites: int, budget: int):
     print()
 
     # Reconstruct derivation by replaying first-match
-    from alphazeropp.instances.bitstring.dsl.derivation import (
+    from alphazeropp.synthesis.derivation import (
         _program_productions, _condition_productions,
     )
 
