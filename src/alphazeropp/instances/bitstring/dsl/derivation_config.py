@@ -11,8 +11,8 @@ from alphazeropp.core.config import (
     EvaluatorConfig,
     RunConfig,
 )
-from alphazeropp.instances.bitstring.dsl.derivation_game import DerivationGame
-from alphazeropp.instances.bitstring.dsl.derivation_network import (
+from alphazeropp.synthesis.derivation_game import DerivationGame
+from alphazeropp.synthesis.derivation_network import (
     DerivationPolicyValueNet,
 )
 from alphazeropp.instances.bitstring.dsl.scan_derivation_game import (
@@ -23,7 +23,7 @@ from alphazeropp.instances.bitstring.dsl.game_config import (
     GameConfig as DSLGameConfig,
     all_initial_states,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
 from alphazeropp.core.agent import Agent
 from alphazeropp.training.trainer import Trainer
 from alphazeropp.training.evaluator import Evaluator

@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Ite, Default, Program,
 )
 

@@ -15,7 +15,7 @@ import gymnasium.spaces as spaces
 import numpy as np
 
 from alphazeropp.core.game import Game
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
 from alphazeropp.instances.bitstring.dsl.scan_grammar import ScanState
 
 

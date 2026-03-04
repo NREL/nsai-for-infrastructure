@@ -15,10 +15,10 @@ Categories:
 import numpy as np
 import pytest
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     ProgramHole, ConditionHole,
     count_conditions, count_programs,
     enumerate_conditions, enumerate_programs,
@@ -26,7 +26,7 @@ from alphazeropp.instances.bitstring.dsl.budget_grammar import (
     enumerate_canonical_conditions, enumerate_canonical_programs,
     format_grammar_summary, format_grammar_debug,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import (
+from alphazeropp.synthesis.derivation import (
     Production, DerivationState,
     enumerate_via_derivation,
     format_derivation_trace, trace_first_derivation,
@@ -383,7 +383,7 @@ class TestDeadEndPrevention:
     @pytest.mark.parametrize("budget", range(2, 15))
     def test_no_dead_end_productions(self, budget):
         """Every hole created by a production must be completable."""
-        from alphazeropp.instances.bitstring.dsl.derivation import _program_productions
+        from alphazeropp.synthesis.derivation import _program_productions
         n_sites = 6
         for prod in _program_productions(budget, n_sites):
             _assert_no_dead_holes(prod.result, n_sites)
@@ -555,7 +555,7 @@ class TestDerivationCanonicalProperties:
 
     def test_condition_productions_parent_is_not(self):
         """_condition_productions with parent_is_not=True never returns Not."""
-        from alphazeropp.instances.bitstring.dsl.derivation import (
+        from alphazeropp.synthesis.derivation import (
             _condition_productions,
         )
         for k in range(1, 13):
@@ -567,7 +567,7 @@ class TestDerivationCanonicalProperties:
 
     def test_action_space_unchanged(self):
         """compute_max_productions returns the expected value."""
-        from alphazeropp.instances.bitstring.dsl.derivation_game import (
+        from alphazeropp.synthesis.derivation_game import (
             compute_max_productions,
         )
         assert compute_max_productions(14, 6) == 48

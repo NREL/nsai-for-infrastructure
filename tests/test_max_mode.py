@@ -16,24 +16,24 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
 )
-from alphazeropp.instances.bitstring.dsl.budget_grammar import (
+from alphazeropp.synthesis.budget_grammar import (
     ProgramHole, ConditionHole,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import (
+from alphazeropp.synthesis.derivation import (
     DerivationState, Production,
     _program_productions, _condition_productions,
     enumerate_via_derivation,
 )
-from alphazeropp.instances.bitstring.dsl.derivation_game import (
+from alphazeropp.synthesis.derivation_game import (
     DerivationGame, UniformPolicyValueNet, compute_max_productions,
 )
 from alphazeropp.instances.bitstring.dsl.game_config import (
     GameConfig, all_initial_states,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
 
 
 # ---------------------------------------------------------------------------

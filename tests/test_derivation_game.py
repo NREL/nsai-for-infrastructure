@@ -10,15 +10,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Ite, Default,
 )
-from alphazeropp.instances.bitstring.dsl.derivation import DerivationState
+from alphazeropp.synthesis.derivation import DerivationState
 from alphazeropp.instances.bitstring.dsl.game_config import (
     GameConfig, all_initial_states,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
-from alphazeropp.instances.bitstring.dsl.derivation_game import (
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.derivation_game import (
     DerivationGame, UniformPolicyValueNet, compute_max_productions,
 )
 from alphazeropp.core.mcts import MCTS

@@ -14,8 +14,8 @@ import pytest
 from alphazeropp.instances.bitstring.dsl.game_config import (
     GameConfig, all_initial_states,
 )
-from alphazeropp.instances.bitstring.dsl.leaf_evaluator import LeafEvaluator
-from alphazeropp.instances.bitstring.dsl.derivation_game import (
+from alphazeropp.synthesis.leaf_evaluator import LeafEvaluator
+from alphazeropp.synthesis.derivation_game import (
     DerivationGame, UniformPolicyValueNet, compute_max_productions,
 )
 from alphazeropp.core.mcts import MCTS
@@ -258,7 +258,7 @@ class TestAgentTreeReuse:
             'n_simulations': 10, 'temperature': 0.1, 'c_exploration': 1.5,
         })
 
-        experience, cumulative_reward = agent.play_one_round_reuse_tree(
+        experience, cumulative_reward, step_infos = agent.play_one_round_reuse_tree(
             game, random_seed=42
         )
 
@@ -267,6 +267,7 @@ class TestAgentTreeReuse:
             assert obs.shape == (2 * BUDGET_5,)
             assert np.isclose(probs.sum(), 1.0)
             assert isinstance(discounted_reward, float)
+        assert len(step_infos) == len(experience)
 
     def test_finds_good_program(self, leaf_eval):
         """End-to-end: tree reuse path finds a reasonable program."""

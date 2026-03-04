@@ -15,10 +15,10 @@ import logging
 import numpy as np
 import pytest
 
-from alphazeropp.instances.bitstring.dsl.ast_nodes import (
+from alphazeropp.synthesis.ast_nodes import (
     Flip, IsZero, Not, And, Ite, Default,
 )
-from alphazeropp.instances.bitstring.dsl.interpreter import (
+from alphazeropp.synthesis.interpreter import (
     eval_condition, eval_program, interp_ops,
     run_policy_episode, format_trace,
 )
