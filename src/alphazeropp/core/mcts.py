@@ -48,7 +48,12 @@ class MCTS():
                  temperature: float = 1.0,
                  c_exploration: float = 1.0,
                  dirichlet_alpha: float = 0.3,
-                 dirichlet_epsilon: float = 0.25):
+                 dirichlet_epsilon: float = 0.25,
+                 # -- Nonterminal rollout evaluation --
+                 rollout_n: int = 0,
+                 rollout_mode: str = "mean",
+                 rollout_blend: float = 0.0,
+                 rollout_budget: int = 500):
         self.game = game
         self.net = net
         self.nodes = {}
@@ -58,6 +63,13 @@ class MCTS():
         self.c_exploration = c_exploration
         self.dirichlet_alpha = dirichlet_alpha
         self.dirichlet_epsilon = dirichlet_epsilon
+
+        # Nonterminal rollout evaluation
+        self.rollout_n = rollout_n
+        self.rollout_mode = rollout_mode
+        self.rollout_blend = rollout_blend
+        self.rollout_budget = rollout_budget
+        self._search_rollout_budget = rollout_budget
 
         # min max Q value
         self.q_min = float('inf')
@@ -74,6 +86,8 @@ class MCTS():
         # Reset min-max Q stats at start of search over this move
         self.q_min = float('inf')
         self.q_max = float('-inf')
+        # Reset shared rollout budget for this search
+        self._search_rollout_budget = self.rollout_budget
 
         if msg: print(msg, "at start of perform_simulations, obs is", self.game.obs)
 
@@ -158,6 +172,8 @@ class MCTS():
         # Reset min-max Q stats at start of search over this move
         self.q_min = float('inf')
         self.q_max = float('-inf')
+        # Reset shared rollout budget for this search
+        self._search_rollout_budget = self.rollout_budget
 
         if msg: print(msg, "at start of perform_simulations_reuse, obs is", self.game.obs)
 
@@ -227,6 +243,50 @@ class MCTS():
         """
         self.game.step_wrapper(action)
 
+    def _rollout_value(self, msg) -> float | None:
+        """Monte Carlo value estimate via random game completion.
+
+        Completes the game rollout_n times using uniform random actions,
+        accumulates rewards, and aggregates. Uses only the Game interface
+        (clone, get_action_mask, step_wrapper). Fully game-agnostic.
+
+        Returns None if no rollout reached a terminal state (budget exhausted),
+        signaling the caller to fall back to nn_value.
+        """
+        rewards = []
+
+        for _ in range(self.rollout_n):
+            if self._search_rollout_budget <= 0:
+                break
+            rollout_game = self.game.clone()
+            cumulative_reward = 0.0
+
+            while not (rollout_game.terminated or rollout_game.truncated):
+                if self._search_rollout_budget <= 0:
+                    break
+                mask = rollout_game.get_action_mask()
+                valid = np.flatnonzero(mask)
+                if len(valid) == 0:
+                    break  # dead end
+                action = valid[np.random.randint(len(valid))]
+                if len(rollout_game.action_space.shape) == 0:
+                    rollout_game.step_wrapper(int(action))
+                else:
+                    rollout_game.step_wrapper(
+                        np.unravel_index(action, mask.shape))
+                cumulative_reward += rollout_game.reward
+                self._search_rollout_budget -= 1
+
+            if rollout_game.terminated or rollout_game.truncated:
+                rewards.append(cumulative_reward)
+
+        if not rewards:
+            return None
+
+        if self.rollout_mode == "max":
+            return float(max(rewards))
+        return float(sum(rewards) / len(rewards))
+
     def search(self, msg) -> float:
         # NOTE does not guarantee that self.game will be in the same state upon exit
         mystate = self.game.hashable_obs
@@ -252,13 +312,22 @@ class MCTS():
         if mynode.nn_policy is None:
             if msg: print(msg, "Reached unexpanded node")
             assert mynode.nn_value is None
-            
+
             mypolicy, myvalue, myaction_mask = self.query_net_masked(msg)
             mynode.nn_policy = mypolicy
             mynode.nn_policy_original = mypolicy.copy()
-            mynode.nn_value = myvalue
             mynode.action_mask = myaction_mask
-            return myvalue
+
+            # Rollout evaluation at nonterminal leaves
+            leaf_value = myvalue
+            if self.rollout_n > 0:
+                rv = self._rollout_value(msg)
+                if rv is not None:
+                    leaf_value = ((1.0 - self.rollout_blend) * rv
+                                  + self.rollout_blend * myvalue)
+
+            mynode.nn_value = leaf_value
+            return leaf_value
         
         # Recursive case: select the best action using UCB with action masking and descend the tree
         ucbs = self.calc_masked_ucbs(mynode, entab(msg, " ucb"))
