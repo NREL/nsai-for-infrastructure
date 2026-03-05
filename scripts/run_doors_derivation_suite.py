@@ -364,7 +364,8 @@ def _aggregate_across_seeds(logs, modes, D, seeds, metric):
     return result
 
 
-def plot_comparison(suite_dir, modes, d_values, seeds):
+def plot_comparison(suite_dir, modes, d_values, seeds,
+                    n_iters=None, n_games=None, sims_by_d=None):
     """Generate all comparison plots."""
     try:
         import matplotlib
@@ -379,29 +380,42 @@ def plot_comparison(suite_dir, modes, d_values, seeds):
         logger.warning("No iteration logs found for plotting")
         return
 
+    # Build hyperparameter suffix for suptitles
+    hp_parts = []
+    if sims_by_d:
+        sims_str = "/".join(str(sims_by_d.get(d, "?")) for d in d_values)
+        hp_parts.append(f"sims={sims_str}")
+    if n_games is not None:
+        hp_parts.append(f"games={n_games}")
+    if n_iters is not None:
+        hp_parts.append(f"iters={n_iters}")
+    hp_parts.append(f"{len(seeds)} seeds")
+    hp_suffix = "\n" + " ".join(hp_parts) if hp_parts else ""
+
     # --- Plot 1: Solve rate vs iteration (per D) ---
     _plot_metric_per_d(logs, modes, d_values, seeds,
                        metric="best_solve_rate", ylabel="Best Solve Rate",
-                       title="Solve Rate by Grammar Variant",
+                       title="Solve Rate by Grammar Variant" + hp_suffix,
                        ylim=(-0.05, 1.1),
                        save_path=suite_dir / "solve_rate_curves.png")
 
     # --- Plot 2: Avg reward vs iteration (per D) ---
     _plot_metric_per_d(logs, modes, d_values, seeds,
                        metric="best_avg_reward", ylabel="Best Avg Reward",
-                       title="Average Reward by Grammar Variant",
+                       title="Average Reward by Grammar Variant" + hp_suffix,
                        ylim=None,
                        save_path=suite_dir / "avg_reward_curves.png")
 
     # --- Plot 3: Unique programs vs iteration (per D) ---
     _plot_metric_per_d(logs, modes, d_values, seeds,
                        metric="unique_programs", ylabel="Unique Programs",
-                       title="Search Efficiency by Grammar Variant",
+                       title="Search Efficiency by Grammar Variant" + hp_suffix,
                        ylim=None,
                        save_path=suite_dir / "unique_programs_curves.png")
 
     # --- Plot 4: Summary bar chart ---
-    _plot_summary_bars(suite_dir, modes, d_values, seeds, logs)
+    _plot_summary_bars(suite_dir, modes, d_values, seeds, logs,
+                       hp_suffix=hp_suffix)
 
     logger.info("[Plot] All comparison plots saved to %s/", suite_dir)
 
@@ -448,7 +462,8 @@ def _plot_metric_per_d(logs, modes, d_values, seeds, metric, ylabel,
     logger.info("[Plot] Saved %s", save_path)
 
 
-def _plot_summary_bars(suite_dir, modes, d_values, seeds, logs):
+def _plot_summary_bars(suite_dir, modes, d_values, seeds, logs,
+                       hp_suffix=""):
     """Plot grouped bar chart: best solve rate per (mode, D)."""
     import matplotlib.pyplot as plt
 
@@ -470,8 +485,8 @@ def _plot_summary_bars(suite_dir, modes, d_values, seeds, logs):
         return
 
     fig, ax = plt.subplots(figsize=(12, max(5, len(groups) * 0.4)))
-    fig.suptitle("Grammar Comparison: Best Solve Rate", fontsize=14,
-                 fontweight="bold")
+    fig.suptitle("Grammar Comparison: Best Solve Rate" + hp_suffix,
+                 fontsize=14, fontweight="bold")
 
     labels = [f"{_LABELS.get(m, m)} (D={D})" for m, D, _, _ in groups]
     means = [m for _, _, m, _ in groups]
@@ -500,7 +515,8 @@ def _plot_summary_bars(suite_dir, modes, d_values, seeds, logs):
 # Branching factor aggregation
 # ---------------------------------------------------------------------------
 
-def plot_branching(suite_dir, modes, d_values, seeds):
+def plot_branching(suite_dir, modes, d_values, seeds,
+                   n_iters=None, n_games=None, sims_by_d=None):
     """Plot mean branching factor per iteration from diagnostics.jsonl."""
     try:
         import matplotlib
@@ -509,12 +525,24 @@ def plot_branching(suite_dir, modes, d_values, seeds):
     except ImportError:
         return
 
+    # Build hyperparameter suffix
+    hp_parts = []
+    if sims_by_d:
+        sims_str = "/".join(str(sims_by_d.get(d, "?")) for d in d_values)
+        hp_parts.append(f"sims={sims_str}")
+    if n_games is not None:
+        hp_parts.append(f"games={n_games}")
+    if n_iters is not None:
+        hp_parts.append(f"iters={n_iters}")
+    hp_parts.append(f"{len(seeds)} seeds")
+    hp_suffix = "\n" + " ".join(hp_parts) if hp_parts else ""
+
     n_d = len(d_values)
     ncols = min(n_d, 2)
     nrows = (n_d + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 5 * nrows),
                              squeeze=False)
-    fig.suptitle("Mean Branching Factor by Grammar Variant",
+    fig.suptitle("Mean Branching Factor by Grammar Variant" + hp_suffix,
                  fontsize=14, fontweight="bold")
 
     for idx, D in enumerate(d_values):
@@ -682,8 +710,13 @@ def main():
 
     # Final outputs
     print_summary_table(summaries)
-    plot_comparison(suite_dir, modes, d_values, seeds)
-    plot_branching(suite_dir, modes, d_values, seeds)
+    sims_by_d = {d: args.sims or SIMS_BY_D.get(d, 100) for d in d_values}
+    plot_comparison(suite_dir, modes, d_values, seeds,
+                    n_iters=args.n_iters, n_games=args.n_games,
+                    sims_by_d=sims_by_d)
+    plot_branching(suite_dir, modes, d_values, seeds,
+                   n_iters=args.n_iters, n_games=args.n_games,
+                   sims_by_d=sims_by_d)
 
     logger.info("\nSuite complete. Results in: %s/", suite_dir)
     logger.info("  summary.csv              -- ranked results")

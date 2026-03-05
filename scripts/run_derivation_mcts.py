@@ -506,6 +506,8 @@ def generate_plots(
     leaf_eval: LeafEvaluator,
     gt_best_value: float | None,
     exp_dir: Path,
+    n_simulations: int = 0,
+    n_rounds: int = 0,
 ):
     try:
         import matplotlib
@@ -519,13 +521,16 @@ def generate_plots(
     print("=== Generating Plots ===")
     print()
 
+    hp_str = f"N={n_sites} L={budget} sims={n_simulations} rounds={n_rounds}"
+
     # Plot 1: MCTS Convergence
-    _plot_convergence(round_logs, gt_best_value, plt, exp_dir)
+    _plot_convergence(round_logs, gt_best_value, plt, exp_dir, hp_str=hp_str)
 
     # Plot 2: Program Quality Distribution
     if gt_results is not None:
         _plot_quality_distribution(
             leaf_eval, gt_results, n_sites, cfg, plt, exp_dir,
+            hp_str=f"N={n_sites} L={budget}",
         )
 
     # Plot 3: Best vs Worst Program Execution
@@ -535,7 +540,7 @@ def generate_plots(
         )
 
     # Plot 4: Derivation Depth Profile
-    _plot_depth_profile(round_logs, plt, exp_dir)
+    _plot_depth_profile(round_logs, plt, exp_dir, hp_str=hp_str)
 
 
 def _plot_convergence(
@@ -543,6 +548,7 @@ def _plot_convergence(
     gt_best_value: float | None,
     plt,
     exp_dir: Path,
+    hp_str: str = "",
 ):
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -567,7 +573,7 @@ def _plot_convergence(
 
     ax.set_xlabel("Round")
     ax.set_ylabel("Solve Rate")
-    ax.set_title("MCTS Convergence: Best Solve Rate Over Rounds")
+    ax.set_title(f"MCTS Convergence: Best Solve Rate Over Rounds\n{hp_str}")
     ax.set_ylim(-0.05, 1.1)
     ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
@@ -586,6 +592,7 @@ def _plot_quality_distribution(
     cfg: GameConfig,
     plt,
     exp_dir: Path,
+    hp_str: str = "",
 ):
     from collections import Counter
 
@@ -620,7 +627,7 @@ def _plot_quality_distribution(
     ax.set_xticklabels([f"{i}/{n_inits}" for i in range(n_inits + 1)])
     ax.set_xlabel(f"Solve Rate (out of {n_inits} initial states)")
     ax.set_ylabel("Number of Programs")
-    ax.set_title("Program Quality Distribution: MCTS vs Full Enumeration")
+    ax.set_title(f"Program Quality: MCTS vs Enumeration | {hp_str}")
     ax.legend()
 
     path = str(exp_dir / "quality_distribution.png")
@@ -718,7 +725,8 @@ def _plot_comparison(
     print(f"  Saved: {path}")
 
 
-def _plot_depth_profile(round_logs: list[dict], plt, exp_dir: Path):
+def _plot_depth_profile(round_logs: list[dict], plt, exp_dir: Path,
+                        hp_str: str = ""):
     from collections import defaultdict
 
     depth_data = defaultdict(list)
@@ -743,7 +751,7 @@ def _plot_depth_profile(round_logs: list[dict], plt, exp_dir: Path):
     ax1.set_xlabel("Derivation Depth (expansion steps)")
     ax1.set_ylabel("Number of Programs", color="#4C72B0")
     ax2.set_ylabel("Avg Solve Rate", color="red")
-    ax1.set_title("Derivation Depth Profile")
+    ax1.set_title(f"Derivation Depth Profile | {hp_str}")
 
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -931,6 +939,7 @@ def main():
         round_logs, gt_results,
         best_program, args.n_sites, args.budget, cfg, leaf_eval,
         gt_best_value, exp_dir,
+        n_simulations=args.n_simulations, n_rounds=args.n_rounds,
     )
 
     # Rename plots with final stats

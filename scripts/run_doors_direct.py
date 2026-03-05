@@ -545,7 +545,7 @@ def compute_solve_rate(agent, n_episodes=20):
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
                           iteration_log, save_path=None, optimal_reward=None,
-                          num_rooms=2):
+                          num_rooms=2, title=None):
     """Plot training metrics: rewards, losses, solve rate, combined."""
     try:
         import matplotlib.pyplot as plt
@@ -580,7 +580,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
     df = pd.DataFrame(merged)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle(f"Doors D={num_rooms} Direct Play -- Training Metrics",
+    fig.suptitle(title or f"Doors D={num_rooms} Direct Play -- Training Metrics",
                  fontsize=14, fontweight="bold")
 
     # Plot 1: Evaluation Rewards
@@ -932,6 +932,11 @@ def main():
     best_solve_iter = 0
     n_accepted = 0
     optimal = _optimal_reward(num_rooms)
+    n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
+    n_games = cfg.trainer.n_games_per_train
+    n_iters = cfg.run.n_iterations
+    plot_title = (f"Doors D={num_rooms} Direct Play\n"
+                  f"sims={n_sims} games={n_games} iters={n_iters}")
 
     for i in range(cfg.run.n_iterations):
         t0 = time.time()
@@ -1001,6 +1006,7 @@ def main():
                 save_path=cfg.run.plot_path,
                 optimal_reward=optimal,
                 num_rooms=num_rooms,
+                title=plot_title,
             )
 
     # Final plot
@@ -1011,6 +1017,7 @@ def main():
         save_path=cfg.run.plot_path,
         optimal_reward=optimal,
         num_rooms=num_rooms,
+        title=plot_title,
     )
     final_plot = rename_plot_with_stats(cfg, iteration_log)
 

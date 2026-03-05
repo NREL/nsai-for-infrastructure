@@ -329,6 +329,11 @@ def main():
     n_sites = cfg.game.kwargs["n_sites"]
     n_ones = 2  # Hardcoded in BitStringGym.__init__
     optimal_reward = (n_sites - n_ones) / n_sites
+    n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
+    n_games = cfg.trainer.n_games_per_train
+    n_iters = cfg.run.n_iterations
+    plot_title = (f"BitString N={n_sites} AlphaZero Training\n"
+                  f"sims={n_sims} games={n_games} iters={n_iters}")
 
     # Training loop
     gated_trainer = GatedTrainer(trainer, evaluator, cfg.run.accept_threshold)
@@ -352,6 +357,7 @@ def main():
                 evaluator.statistics_manager,
                 save_path=cfg.run.plot_path,
                 optimal_reward=optimal_reward,
+                title=plot_title,
             )
 
     # Final plot with stats in filename
@@ -360,6 +366,7 @@ def main():
         evaluator.statistics_manager,
         save_path=cfg.run.plot_path,
         optimal_reward=optimal_reward,
+        title=plot_title,
     )
     final_plot = rename_plot_with_stats(cfg, trainer.statistics_manager, evaluator.statistics_manager)
     print(f"\nTraining complete. Results saved to: {exp_dir}/")
@@ -369,7 +376,7 @@ def main():
     print(f"  Eval log:   {exp_dir / 'eval_stats.jsonl'}")
 
 
-def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None, optimal_reward=None):
+def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None, optimal_reward=None, title=None):
     """
     Plot training metrics.
 
@@ -402,7 +409,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
     df = pd.DataFrame(merged)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle("BitString AlphaZero Training Metrics", fontsize=14, fontweight='bold')
+    fig.suptitle(title or "BitString AlphaZero Training Metrics", fontsize=14, fontweight='bold')
 
     # Plot 1: Eval reward mean with std band
     ax1 = axes[0, 0]
