@@ -174,14 +174,24 @@ class Trainer:
         experience = []
         rewards = []
         all_diagnostics = []
+        all_leaf_eval_data = []
         for example_set in train_example_sets:
             experience.append(example_set[0])
             rewards.append(example_set[1])
             # Step infos may be present as 3rd element (from diagnostics)
             if len(example_set) > 2:
                 all_diagnostics.append(example_set[2])
+            # Leaf evaluator caches may be present as 4th element
+            if len(example_set) > 3 and example_set[3] is not None:
+                all_leaf_eval_data.append(example_set[3])
 
         self._last_diagnostics = all_diagnostics
+
+        # Merge leaf evaluator caches from workers back into main process
+        leaf_eval = getattr(self.game, 'leaf_evaluator', None)
+        if leaf_eval is not None and hasattr(leaf_eval, 'merge_caches'):
+            for data in all_leaf_eval_data:
+                leaf_eval.merge_caches(data)
 
         avg_reward = float(np.mean(rewards)) if rewards else 0.0
 

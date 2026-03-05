@@ -109,6 +109,36 @@ class LeafEvaluator:
             "total_interp_ops": self._total_interp_ops,
         }
 
+    def export_caches(self) -> dict:
+        """Export cache data for cross-process aggregation.
+
+        Used by multiprocessing workers to return program evaluation
+        results back to the main process.
+        """
+        return {
+            "_cache": dict(self._cache),
+            "_full_cache": dict(self._full_cache),
+            "_program_cache": dict(self._program_cache),
+            "_eval_count": self._eval_count,
+            "_total_env_steps": self._total_env_steps,
+            "_total_interp_ops": self._total_interp_ops,
+        }
+
+    def merge_caches(self, other: dict):
+        """Merge exported caches from a worker LeafEvaluator.
+
+        Only adds programs not already in this evaluator's cache.
+        Stats are accumulated additively.
+        """
+        for key, value in other["_cache"].items():
+            if key not in self._cache:
+                self._cache[key] = value
+                self._full_cache[key] = other["_full_cache"][key]
+                self._program_cache[key] = other["_program_cache"][key]
+        self._eval_count += other.get("_eval_count", 0)
+        self._total_env_steps += other.get("_total_env_steps", 0)
+        self._total_interp_ops += other.get("_total_interp_ops", 0)
+
     def _evaluate(self, program: Program) -> dict:
         """Run the program on all frozen states and collect raw metrics."""
         self._eval_count += 1

@@ -206,6 +206,17 @@ class Agent:
 
         return collected_experience, sum(collected_rewards), step_infos
 
+    @staticmethod
+    def _extract_leaf_eval_data(game_state):
+        """Extract leaf evaluator caches from a game state if available.
+
+        Returns exported cache dict or None for non-derivation games.
+        """
+        le = getattr(game_state, 'leaf_evaluator', None)
+        if le is not None and hasattr(le, 'export_caches'):
+            return le.export_caches()
+        return None
+
     def play_for_experience(self, game: Game, id: int, reset_seed: int, interaction_seed,
                             add_noise: bool = True,
                             temperature_override: float | None = None):
@@ -215,9 +226,10 @@ class Agent:
         current_game_state = game.clone() # we make sure that it doesn't interfere with the original game state.
         current_game_state.reset_wrapper(seed=reset_seed)
 
-        return self.play_one_round(current_game_state, random_seed=interaction_seed, msg="",
-                                   add_noise=add_noise,
-                                   temperature_override=temperature_override)
+        result = self.play_one_round(current_game_state, random_seed=interaction_seed, msg="",
+                                     add_noise=add_noise,
+                                     temperature_override=temperature_override)
+        return (*result, self._extract_leaf_eval_data(current_game_state))
 
     def play_for_experience_reuse_tree(self, game: Game, id: int, reset_seed: int, interaction_seed,
                                         add_noise: bool = True,
@@ -229,6 +241,7 @@ class Agent:
         current_game_state = game.clone()
         current_game_state.reset_wrapper(seed=reset_seed)
 
-        return self.play_one_round_reuse_tree(current_game_state, random_seed=interaction_seed, msg="",
-                                               add_noise=add_noise,
-                                               temperature_override=temperature_override)
+        result = self.play_one_round_reuse_tree(current_game_state, random_seed=interaction_seed, msg="",
+                                                 add_noise=add_noise,
+                                                 temperature_override=temperature_override)
+        return (*result, self._extract_leaf_eval_data(current_game_state))

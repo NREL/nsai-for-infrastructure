@@ -94,8 +94,20 @@ def doors_macro_productions(
     return prods
 
 
+class MacroProductionsFn:
+    """Picklable callable that replaces the closure from make_macro_fn.
+
+    Multiprocessing (spawn) needs to pickle everything sent to workers.
+    Closures (local functions) can't be pickled, but module-level classes can.
+    """
+
+    def __init__(self, doors_cfg: DoorsGameConfig):
+        self.doors_cfg = doors_cfg
+
+    def __call__(self, budget: int) -> list[Production]:
+        return doors_macro_productions(budget, self.doors_cfg)
+
+
 def make_macro_fn(doors_cfg: DoorsGameConfig):
-    """Create a closure suitable for FactoredDerivationGame's macro_productions_fn."""
-    def macro_fn(budget: int) -> list[Production]:
-        return doors_macro_productions(budget, doors_cfg)
-    return macro_fn
+    """Create a picklable callable for FactoredDerivationGame's macro_productions_fn."""
+    return MacroProductionsFn(doors_cfg)
