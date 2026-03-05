@@ -1,4 +1,5 @@
 import os
+import platform
 import torch
 
 THREAD_VARS = ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_NUM_THREADS", "NUMEXPR_NUM_THREADS"]
@@ -10,6 +11,9 @@ def disable_numpy_multithreading():
     """
     for var in THREAD_VARS:
         os.environ[var] = "1"
+    # Suppress macOS Objective-C runtime warnings during multiprocessing spawn
+    if platform.system() == "Darwin":
+        os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
 
 def use_deterministic_cuda():
     """
