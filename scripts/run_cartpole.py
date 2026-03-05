@@ -28,6 +28,11 @@ def models_equal(m1, m2):
 def main():
     cfg = CartPoleConfig()
     game, net, agent, trainer, evaluator = cfg.build()
+    n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
+    n_games = cfg.trainer.n_games_per_train
+    n_iters = cfg.run.n_iterations
+    plot_title = (f"CartPole AlphaZero Training\n"
+                  f"sims={n_sims} games={n_games} iters={n_iters}")
 
     # Example usage:
     for i in range(cfg.run.n_iterations):
@@ -46,9 +51,9 @@ def main():
             agent.net = old_agent.net
 
         if i % cfg.run.plot_every == 0:
-            plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path=cfg.run.plot_path)
+            plot_training_metrics(trainer.statistics_manager, evaluator.statistics_manager, save_path=cfg.run.plot_path, title=plot_title)
 
-def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None):
+def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_path=None, title=None):
     """
     Sub-Phase 4.2: Plot training metrics.
     
@@ -82,7 +87,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager, save_p
     df = pd.DataFrame(merged)
     
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle("CartPole AlphaZero Training Metrics", fontsize=14, fontweight='bold')
+    fig.suptitle(title or "CartPole AlphaZero Training Metrics", fontsize=14, fontweight='bold')
     
     # Plot 1: Eval reward mean with std band
     ax1 = axes[0, 0]

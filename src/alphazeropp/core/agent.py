@@ -1,5 +1,7 @@
 from typing import Any, Callable
 
+import logging
+
 import numpy as np
 
 from alphazeropp.core.game import Game
@@ -12,6 +14,8 @@ It is responsible for playing the game using the policy and value network, and c
 Other than that, the agent is not doing anything else, meaning that we have other classes to handle training, checkpointing, multithreading, etc. 
 This is to keep the agent class focused on its core responsibility of playing the game and collecting experience.
 """
+
+logger = logging.getLogger(__name__)
 
 class Agent:
     # Constants
@@ -58,67 +62,82 @@ class Agent:
             self.rngs[rng_name] = np.random.default_rng(seed)
         self.random_seeds = random_seeds
         if all(rng_name in random_seeds for rng_name in self.RNG_NAMES):
-            print(f"RNG seeds are fully specified")
+            logger.info("RNG seeds are fully specified")
         else:
-            print(f"RNG seeds are not fully specified, using nondeterministic seeds for: {', '.join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds)}")
+            logger.info("RNG seeds are not fully specified, using nondeterministic seeds for: %s",
+                        ", ".join(rng_name for rng_name in self.RNG_NAMES if rng_name not in random_seeds))
             
             
     def _randseed(self, rng_name: str) -> int:
         """Generate a random seed integer from the specified RNG."""
         return int(self.rngs[rng_name].integers(0, 2**31 - 1))
     
-    def policy(self, state: Game, msg=None) -> np.ndarray:
+    def policy(self, state: Game, msg=None,
+               add_noise: bool = True,
+               temperature_override: float | None = None) -> np.ndarray:
         """
         The function returns the move probabilities for a game state.
-        Notice that it returns a tuple of (move_probs, state), where state is the original game state passed in.
-        
+
         Args:
             state (Game): The current game state.
             msg (str, optional): Debug message prefix for logging moves. Defaults to None.
+            add_noise (bool): Whether to add Dirichlet noise at the MCTS root.
+                True for self-play (exploration), False for evaluation.
+            temperature_override (float | None): If set, override the MCTS temperature
+                for converting visit counts to probabilities. Low values (e.g. 0.05)
+                give near-greedy action selection for evaluation.
 
         Returns:
-            tuple[np.ndarray, Game]: A tuple containing the move probabilities and the original game state.
-            We expect move_probs to be a numpy array of shape equal to the action space of the game.
+            np.ndarray: Move probabilities, shape equal to the action space.
         """
-        current_game_state = state.stash_state() # We copy the original Game state to avoid modifying it during MCTS simulations
-        
+        current_game_state = state.clone()
+
         if self.external_policy is not None:
             move_probs = self.external_policy(current_game_state)
         else:
             mcts = MCTS(current_game_state, self.net, **self.mcts_params)
-            move_probs = mcts.perform_simulations("", add_noise=True) # The second argument is a message prefix for debugging prints. We don't know what to put there for now, so we just put an empty string.
+            if temperature_override is not None:
+                mcts.temperature = temperature_override
+            move_probs = mcts.perform_simulations("", add_noise=add_noise)
         
         assert len(move_probs.shape) == 1, "move_probs should be a flat array"
         return move_probs
         
-    def play_one_round(self, game: Game, max_moves: int = 10_000, random_seed: int | None = None, msg = ""):
+    def play_one_round(self, game: Game, max_moves: int = 10_000,
+                       random_seed: int | None = None, msg="",
+                       add_noise: bool = True,
+                       temperature_override: float | None = None):
         """
         The function plays for one round from the given game state using the agent's policy.
         """
-        current_game_state = game.stash_state()
+        current_game_state = game.clone()
         rng = np.random.default_rng(random_seed)
-        
+
         collected_experience = []
         collected_rewards = [] # we seperately store rewards, because we want to calculate discounted rewards at the end of the episode.
+        step_infos = []
         cumulative_reward = 0.0
         for i in range(max_moves):
             if msg: print(msg, f"at start of move {i+1}, obs is", current_game_state.obs)
             # We assume that move_probs has already been flattened inside the policy function.
-            move_probs = self.policy(current_game_state, "")
+            move_probs = self.policy(current_game_state, "",
+                                     add_noise=add_noise,
+                                     temperature_override=temperature_override)
             action_idx = rng.choice(len(move_probs), p=move_probs)
             """
             The implementation here is different from the original implementation in that
             we assume move_probs is already a flat array, so we can directly use rng.choice on it.
             """
             collected_experience.append((current_game_state.obs.copy(), move_probs)) # So the collected experience is a list of ((obs, move_probs), action_idx) tuples.
-            
-            _, reward, terminated, truncated, _ = current_game_state.step_wrapper(action_idx) # We only care about the reward here.
-            
+
+            _, reward, terminated, truncated, info = current_game_state.step_wrapper(action_idx)
+            step_infos.append(info)
+
             collected_rewards.append(reward) # So the collected experience is a list of ((obs, action_idx), reward) tuples.
             cumulative_reward += reward
             if terminated or truncated:
                 break
-        
+
         # Now we calculate discounted rewards and combine them with the observations and move_probs to form the final experience tuples.
         discounted_rewards = []
         cumulative_reward = 0.0
@@ -126,17 +145,103 @@ class Agent:
             cumulative_reward = reward + self.reward_discount * cumulative_reward
             discounted_rewards.append(cumulative_reward)
         discounted_rewards.reverse() # Now discounted_rewards is in the same order as collected_experience
-        
+
         collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
-        
-            
-        return collected_experience, cumulative_reward
+
+
+        return collected_experience, cumulative_reward, step_infos
     
-    def play_for_experience(self, game: Game, id: int,reset_seed:int, interaction_seed):
+    def play_one_round_reuse_tree(self, game: Game, max_moves: int = 10_000,
+                                   random_seed: int | None = None, msg="",
+                                   add_noise: bool = True,
+                                   temperature_override: float | None = None):
+        """Play one round using a single MCTS tree reused across all moves.
+
+        Unlike play_one_round (which creates a fresh MCTS per move via policy()),
+        this method creates one MCTS at the start and reuses its tree across
+        all moves via perform_simulations_reuse() + advance_to().
+        """
+        mcts = MCTS(game.clone(), self.net, **self.mcts_params)
+        if temperature_override is not None:
+            mcts.temperature = temperature_override
+        rng = np.random.default_rng(random_seed)
+
+        collected_experience = []
+        collected_rewards = []
+        step_infos = []
+        cumulative_reward = 0.0
+
+        for i in range(max_moves):
+            if msg: print(msg, f"at start of move {i+1}, obs is", mcts.game.obs)
+
+            move_probs = mcts.perform_simulations_reuse("", add_noise=add_noise)
+            assert len(move_probs.shape) == 1, "move_probs should be a flat array"
+
+            action_idx = rng.choice(len(move_probs), p=move_probs)
+            # Read obs from mcts.game (not a local var) because unstash_state
+            # may have replaced the game object reference.
+            collected_experience.append((mcts.game.obs.copy(), move_probs))
+
+            mcts.advance_to(action_idx)
+
+            reward = mcts.game.reward
+            terminated = mcts.game.terminated
+            truncated = mcts.game.truncated
+            step_infos.append(mcts.game.info)
+
+            collected_rewards.append(reward)
+            cumulative_reward += reward
+            if terminated or truncated:
+                break
+
+        # Calculate discounted rewards (same logic as play_one_round)
+        discounted_rewards = []
+        cumulative_reward = 0.0
+        for reward in reversed(collected_rewards):
+            cumulative_reward = reward + self.reward_discount * cumulative_reward
+            discounted_rewards.append(cumulative_reward)
+        discounted_rewards.reverse()
+
+        collected_experience = [(obs, move_probs, discounted_reward) for ((obs, move_probs), discounted_reward) in zip(collected_experience, discounted_rewards)]
+
+        return collected_experience, sum(collected_rewards), step_infos
+
+    @staticmethod
+    def _extract_leaf_eval_data(game_state):
+        """Extract leaf evaluator caches from a game state if available.
+
+        Returns exported cache dict or None for non-derivation games.
+        """
+        le = getattr(game_state, 'leaf_evaluator', None)
+        if le is not None and hasattr(le, 'export_caches'):
+            return le.export_caches()
+        return None
+
+    def play_for_experience(self, game: Game, id: int, reset_seed: int, interaction_seed,
+                            add_noise: bool = True,
+                            temperature_override: float | None = None):
         import torch
-        torch.cuda.init() # We need to initialize CUDA in the child process before we can use the network, otherwise we may encounter issues with CUDA context initialization in multiprocessing.
-        current_game_state = game.stash_state() # we make sure that it doesn't interfere with the original game state.
+        if torch.cuda.is_available():
+            torch.cuda.init() # We need to initialize CUDA in the child process before we can use the network, otherwise we may encounter issues with CUDA context initialization in multiprocessing.
+        current_game_state = game.clone() # we make sure that it doesn't interfere with the original game state.
         current_game_state.reset_wrapper(seed=reset_seed)
-        
-        # return self.play_one_round(current_game_state, random_seed=interaction_seed, msg=f"[Agent {id}]")
-        return self.play_one_round(current_game_state, random_seed=interaction_seed, msg="")
+
+        result = self.play_one_round(current_game_state, random_seed=interaction_seed, msg="",
+                                     add_noise=add_noise,
+                                     temperature_override=temperature_override)
+        return (*result, self._extract_leaf_eval_data(current_game_state))
+
+    def play_for_experience_reuse_tree(self, game: Game, id: int, reset_seed: int, interaction_seed,
+                                        add_noise: bool = True,
+                                        temperature_override: float | None = None):
+        """Like play_for_experience but using tree reuse across moves."""
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.init()
+        current_game_state = game.clone()
+        current_game_state.reset_wrapper(seed=reset_seed)
+
+        result = self.play_one_round_reuse_tree(current_game_state, random_seed=interaction_seed, msg="",
+                                                 add_noise=add_noise,
+                                                 temperature_override=temperature_override)
+        return (*result, self._extract_leaf_eval_data(current_game_state))

@@ -11,11 +11,11 @@ from typing import Hashable
 class BitStringGym(gym.Env):
     metadata = {'render.modes': ['human']}
     
-    def __init__(self, n_sites=10, bit_flip=True, sparse_reward=True):
+    def __init__(self, n_sites=10, bit_flip=True, sparse_reward=True, n_ones=2):
         super().__init__()
         self.bit_flip = bit_flip
         self.sparse_reward = sparse_reward
-        self.n_ones = 2 # Number of 1s that are initialized as 1
+        self.n_ones = n_ones
         
         self.n_sites = n_sites
         self.max_steps = 2 * self.n_sites if not self.sparse_reward else self.n_sites - self.n_ones
@@ -70,8 +70,9 @@ class BitStringGym(gym.Env):
         return self.state.copy(), {}
 
 class BitStringGame(EnvGame):
-    def __init__(self, **kwargs):
-        env = BitStringGym(**kwargs)
+    def __init__(self, env=None, **kwargs):
+        if env is None:
+            env = BitStringGym(**kwargs)
         super().__init__(env)
         self.action_mask = np.ones(env.n_sites, dtype=bool)  # All actions are always available
     

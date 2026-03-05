@@ -1,4 +1,5 @@
 import os
+import platform
 import warnings
 import itertools
 from torch.multiprocessing import get_context
@@ -53,6 +54,9 @@ class MultiprocessingManager:
         """
         ctx = get_context("spawn")  # Use 'spawn' to avoid issues with forking in some environments
         if n_procs is None or n_procs >= 0:
+            # Suppress macOS MallocStackLogging warnings in spawned child processes
+            if platform.system() == "Darwin":
+                os.environ.pop("MallocStackLogging", None)
             with ctx.Pool(processes=n_procs) as pool:
                 results = pool.starmap(fn, arg_tuples)
         else:

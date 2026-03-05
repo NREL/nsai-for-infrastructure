@@ -96,11 +96,16 @@ class Game(ABC, Generic[ObsType, ActType]):
 
     def unstash_state(self, state: Any):
         """
-        Returns this game reverted to the state represented by `state`, which came from
-        `stash_state`. After this is called, the object on which it is called should no
-        longer be used. Override this if you override `stash_state`.
+        Reverts this game to the state represented by `state` (from `stash_state`).
+        Modifies self in-place and returns self.  Override this if you override
+        `stash_state`.
         """
-        return state
+        self.__dict__.update(state.__dict__)
+        return self
+
+    def clone(self) -> "Game":
+        """Return an independent playable copy of this game."""
+        return copy.deepcopy(self)
 
 class EnvGame(Game[ObsType, ActType]):
     """
