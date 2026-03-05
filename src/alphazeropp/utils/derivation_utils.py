@@ -18,7 +18,7 @@ def print_iteration_header(i, total):
 
 
 def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats,
-                            best_program_str, best_metrics):
+                            best_program_str, best_metrics, wall_clock=None):
     """Print compact iteration summary with best program info."""
     train_recs = [r for r in trainer_stats.to_list() if "train_loss" in r]
     train_rec = train_recs[-1] if train_recs else {}
@@ -32,11 +32,12 @@ def print_iteration_summary(i, total, score, trainer_stats, evaluator_stats,
     new_mean = eval_rec.get("new_rewards_mean", float("nan"))
     old_mean = eval_rec.get("old_rewards_mean", float("nan"))
 
+    timing_str = f" | {wall_clock:.1f}s" if wall_clock is not None else ""
     print(
         f"[ITER {i}/{total}] Score: {score*100:.1f}% "
         f"| New reward: {new_mean:.3f} vs Old: {old_mean:.3f} "
         f"| Loss: {loss:.4f} (P:{p_loss:.3f} V:{v_loss:.3f}) "
-        f"| Examples: {n_examples}"
+        f"| Examples: {n_examples}{timing_str}"
     )
 
     if best_program_str is not None and best_metrics is not None:
@@ -126,7 +127,8 @@ def print_best_program_traces(program, metrics, leaf_eval, max_traces=5):
     for i, x0 in enumerate(frozen_states[:n_to_show]):
         env = leaf_eval.game_config.make_env(n_sites, frozen_states=[x0])
         env.reset()
-        result = run_policy_episode(env, program, x0=x0)
+        result = run_policy_episode(env, program, x0=x0,
+                                           is_solved=leaf_eval.is_solved)
 
         if i == 0:
             # Full trace for the first state
@@ -172,7 +174,8 @@ def rename_plot_with_stats(cfg, trainer_stats, evaluator_stats, best_metrics):
 
 
 def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
-                          program_log, save_path=None, optimal_reward=None):
+                          program_log, save_path=None, optimal_reward=None,
+                          title_suffix=""):
     """Plot training metrics with derivation-specific best-program tracking.
 
     Four panels:
@@ -216,7 +219,7 @@ def plot_training_metrics(trainer_stats_manager, evaluator_stats_manager,
     df = pd.DataFrame(merged)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    fig.suptitle("DerivationGame AlphaZero Training Metrics",
+    fig.suptitle(f"DerivationGame AlphaZero Training{title_suffix}",
                  fontsize=14, fontweight="bold")
 
     # Panel 1 (top-left): Best Program Quality — reward with solved markers
@@ -391,6 +394,23 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
     exp_dir = Path(exp_dir)
     exp_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build title suffix with key hyperparameters
+    n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
+    n_games = cfg.trainer.n_games_per_train
+    n_iters = cfg.run.n_iterations
+    n_sites = cfg.game.kwargs.get("n_sites", "?")
+    budget = cfg.game.kwargs.get("budget")
+    num_rooms = cfg.game.kwargs.get("num_rooms")
+    domain_parts = []
+    if num_rooms is not None:
+        domain_parts.append(f"D={num_rooms}")
+    domain_parts.append(f"N={n_sites}")
+    if budget is not None:
+        domain_parts.append(f"L={budget}")
+    domain_str = " ".join(domain_parts)
+    title_suffix = (f"\n{mode} | {domain_str} | "
+                    f"sims={n_sims} games={n_games} iters={n_iters}")
+
     # Build objects
     game, net, agent, trainer, evaluator = cfg.build()
 
@@ -430,12 +450,14 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
             "best_avg_reward": (best_program_metrics.get("avg_reward", 0)
                                 if best_program_metrics else 0),
             "unique_programs": leaf_eval.stats()["unique_programs"],
+            "iter_wall_clock": round(iter_wall_clock, 1),
         })
 
         print_iteration_summary(
             i + 1, cfg.run.n_iterations, score,
             trainer.statistics_manager, evaluator.statistics_manager,
             best_program_str, best_program_metrics,
+            wall_clock=iter_wall_clock,
         )
 
         # Merge leaf_stats into trainer statistics
@@ -485,6 +507,7 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
                 program_log,
                 save_path=cfg.run.plot_path,
                 optimal_reward=optimal_reward,
+                title_suffix=title_suffix,
             )
 
 
@@ -495,6 +518,7 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
         program_log,
         save_path=cfg.run.plot_path,
         optimal_reward=optimal_reward,
+        title_suffix=title_suffix,
     )
     final_plot = rename_plot_with_stats(
         cfg, trainer.statistics_manager, evaluator.statistics_manager,

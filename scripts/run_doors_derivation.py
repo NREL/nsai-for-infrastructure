@@ -66,10 +66,6 @@ def _build_sections(cfg):
         cfg.game.kwargs["locs_per_room"] = int(val)
         _update_derived()
 
-    def _set_n_sites(val):
-        cfg.game.kwargs["n_sites"] = val
-        cfg.net.kwargs["n_sites"] = val
-
     def _set_budget(val):
         cfg.game.kwargs["budget"] = val
         cfg.net.kwargs["budget"] = val
@@ -82,8 +78,6 @@ def _build_sections(cfg):
          _set_locs_per_room,
          "Locations per room", None),
         # Derived (editable for manual override)
-        ("n_sites", cfg.game.kwargs["n_sites"], _set_n_sites,
-         "Observation size (auto: M + 2D - 1)", None),
         ("budget", cfg.game.kwargs["budget"], _set_budget,
          "AST node budget (auto: ~1.5x optimal)", None),
         ("horizon", cfg.game.kwargs["horizon"],
@@ -117,9 +111,14 @@ def _build_sections(cfg):
         "c_exploration": "UCB exploration constant",
         "dirichlet_alpha": "Dirichlet noise concentration parameter",
         "dirichlet_epsilon": "Weight of Dirichlet noise at root",
+        "rollout_n": "Random completions per MCTS leaf (0=disabled)",
+        "rollout_mode": "Aggregation: mean or max",
+        "rollout_blend": "Blend: (1-b)*rollout + b*nn_value",
+        "rollout_budget": "Max total steps for rollouts per leaf",
     }
     for k in ["n_simulations", "temperature", "c_exploration",
-              "dirichlet_alpha", "dirichlet_epsilon"]:
+              "dirichlet_alpha", "dirichlet_epsilon",
+              "rollout_n", "rollout_mode", "rollout_blend", "rollout_budget"]:
         if k in cfg.agent.mcts_params:
             params.append(
                 (k, cfg.agent.mcts_params[k], dict_setter(cfg.agent.mcts_params, k),
@@ -174,11 +173,13 @@ def _build_sections(cfg):
 
     all_params = build_param_list(params)
 
-    problem_labels = {"num_rooms", "locs_per_room", "n_sites", "budget",
+    problem_labels = {"num_rooms", "locs_per_room", "budget",
                       "horizon", "budget_mode", "allow_and"}
     eval_labels = {"metric", "penalty_lambda", "blend_alpha"}
     mcts_labels = {"n_simulations", "temperature", "c_exploration",
-                   "dirichlet_alpha", "dirichlet_epsilon"}
+                   "dirichlet_alpha", "dirichlet_epsilon",
+                   "rollout_n", "rollout_mode", "rollout_blend",
+                   "rollout_budget"}
     net_labels = {"d_model", "n_heads", "n_layers", "learning_rate", "batch_size"}
     agent_labels = {"reward_discount"}
     trainer_labels = {"n_games_per_train", "n_past_iters", "n_procs"}
@@ -214,7 +215,15 @@ def setup_experiment_dir(cfg, mode="doors"):
     num_rooms = cfg.game.kwargs["num_rooms"]
     and_tag = "and" if cfg.game.kwargs.get("allow_and", True) else "noand"
 
-    dirname = (f"{timestamp}_D{num_rooms}_{and_tag}_N{n_sites}_L{budget}"
+    # Derive game_type tag from mode
+    if mode == "doors_d10_macro":
+        game_tag = "factored_macro"
+    elif mode == "doors_factored":
+        game_tag = "factored"
+    else:
+        game_tag = "flat"
+
+    dirname = (f"{timestamp}_D{num_rooms}_{and_tag}_{game_tag}_N{n_sites}_L{budget}"
                f"_{bmode}_{metric}_mcts{sim}_games{games}_iter{iters}")
 
     exp_dir = Path("experiments") / "doors_derivation" / dirname
@@ -257,9 +266,33 @@ def print_banner(cfg, exp_dir, mode="doors"):
           f"(optimal: {derived['optimal_steps']} steps)")
     print(f"    Allow And:           {allow_and}")
     print()
-    bmode = gk.get("program_budget_mode", "max")
     M = derived["M"]
     K = derived["K"]
+    key_loc = [k * lpr + 1 for k in range(num_rooms - 1)]
+    print("  ROOM LAYOUT & KEYS")
+    for r in range(num_rooms):
+        locs = list(range(r * lpr, (r + 1) * lpr))
+        keys_here = [k for k, kl in enumerate(key_loc) if kl // lpr == r]
+        room_desc = f"    Room {r}: locations {locs}"
+        if keys_here:
+            for k in keys_here:
+                room_desc += f"  [Key {k} at loc {key_loc[k]} -> unlocks Room {k+1}]"
+        if r == num_rooms - 1:
+            room_desc += "  [GOAL]"
+        print(room_desc)
+    print()
+    print(f"  OBSERVATION VECTOR (size {n_sites})")
+    print(f"    Indices [0..{M-1}]:        Agent location (one-hot)")
+    print(f"    Indices [{M}..{M+num_rooms-1}]:      Room unlock status (1=unlocked)")
+    print(f"    Indices [{M+num_rooms}..{M+num_rooms+K-1}]:      Key availability (1=available)")
+    print()
+    print("  GRAMMAR GUIDE")
+    print(f"    Flip(j) = test obs[j]==0    (negated predicate)")
+    print(f"    Ite(cond, act, else)        if cond then act else recurse")
+    print(f"    IsZero(j):  j<{M} -> 'not at loc j'  |  j>={M} -> 'room/key status'")
+    print(f"    Actions:    Flip(0..{M-1}) = MOVE(loc)  |  Flip({M}..{M+K-1}) = PICK(key)  |  Flip({M+K}) = NOOP")
+    print()
+    bmode = gk.get("program_budget_mode", "max")
     n_actions = M + K + 1
     max_prods = compute_max_productions(budget, n_sites, mode=bmode,
                                          allow_and=allow_and,
@@ -376,15 +409,15 @@ def select_mode():
     print("  2) doors_factored -- Factored action space")
     print("     Splits productions into (structure, parameter) for lower branching")
     print()
-    print("  3) doors_d10_macro -- D=10 with macros")
-    print("     Factored + PickRule/MoveRule macros + condition budget cap")
+    print("  3) doors_factored_macro -- Factored + macros")
+    print("     Factored action space + PickRule/MoveRule macros + condition budget cap")
     print()
     choice = input("  Select mode [0]: ").strip()
     if choice in ("1", "doors_no_and"):
         return "doors_no_and"
     if choice in ("2", "doors_factored"):
         return "doors_factored"
-    if choice in ("3", "doors_d10_macro"):
+    if choice in ("3", "doors_d10_macro", "doors_factored_macro"):
         return "doors_d10_macro"
     return "doors"
 

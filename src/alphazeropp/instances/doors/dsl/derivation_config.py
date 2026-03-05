@@ -39,7 +39,7 @@ class DoorsDerivationConfig(MetaConfig):
 
     def __init__(self):
         super().__init__()
-        num_rooms = 5
+        num_rooms = 3
         locs_per_room = 2
         derived = compute_doors_derived_params(num_rooms, locs_per_room)
 
@@ -84,11 +84,15 @@ class DoorsDerivationConfig(MetaConfig):
         )
         self.agent = AgentConfig(
             mcts_params={
-                "n_simulations": 100,
+                "n_simulations": 80,
                 "temperature": 1.0,
                 "c_exploration": 1.5,
                 "dirichlet_alpha": 0.25,
                 "dirichlet_epsilon": 0.40,
+                "rollout_n": 4,
+                "rollout_mode": "max",
+                "rollout_blend": 0.0,
+                "rollout_budget": 200,
             },
             reward_discount=1.0,
             random_seeds={
@@ -99,17 +103,17 @@ class DoorsDerivationConfig(MetaConfig):
             },
         )
         self.trainer = TrainerConfig(
-            n_games_per_train=20,
+            n_games_per_train=30,
             n_past_iterations_to_train=20,
-            n_procs=-1,
+            n_procs=4,
             checkpoint_dir="checkpoints",
         )
         self.evaluator = EvaluatorConfig(
             n_games=20,
-            n_procs=-1,
+            n_procs=4,
         )
         self.run = RunConfig(
-            n_iterations=20,
+            n_iterations=30,
             accept_threshold=0.40,
             plot_every=5,
             plot_path="doors_training_metrics.png",
@@ -201,7 +205,7 @@ class DoorsDerivationConfigNoAnd(DoorsDerivationConfig):
         super().__init__()
         self.game.kwargs["allow_and"] = False
         self.run = RunConfig(
-            n_iterations=20,
+            n_iterations=30,
             accept_threshold=0.40,
             plot_every=5,
             plot_path="doors_no_and_training_metrics.png",
@@ -220,7 +224,7 @@ class DoorsFactoredDerivationConfig(DoorsDerivationConfig):
     def __init__(self):
         super().__init__()
         self.run = RunConfig(
-            n_iterations=20,
+            n_iterations=30,
             accept_threshold=0.40,
             plot_every=5,
             plot_path="doors_factored_training_metrics.png",
@@ -312,7 +316,7 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
 
     def __init__(self):
         super().__init__()
-        num_rooms = 5
+        num_rooms = 3
         locs_per_room = 2
         derived = compute_doors_derived_params(num_rooms, locs_per_room)
 
@@ -329,11 +333,15 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
         })
         self.agent = AgentConfig(
             mcts_params={
-                "n_simulations": 100,
+                "n_simulations": 80,
                 "temperature": 1.0,
                 "c_exploration": 1.5,
                 "dirichlet_alpha": 0.25,
                 "dirichlet_epsilon": 0.40,
+                "rollout_n": 4,
+                "rollout_mode": "max",
+                "rollout_blend": 0.0,
+                "rollout_budget": 200,
             },
             reward_discount=1.0,
             random_seeds={
@@ -344,13 +352,13 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
             },
         )
         self.trainer = TrainerConfig(
-            n_games_per_train=20,
+            n_games_per_train=30,
             n_past_iterations_to_train=20,
-            n_procs=-1,
+            n_procs=4,
             checkpoint_dir="checkpoints",
         )
         self.run = RunConfig(
-            n_iterations=20,
+            n_iterations=30,
             accept_threshold=0.40,
             plot_every=5,
             plot_path="doors_d10_macro_training_metrics.png",
