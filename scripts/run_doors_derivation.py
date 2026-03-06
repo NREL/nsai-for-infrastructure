@@ -16,10 +16,13 @@ from alphazeropp.utils import disable_numpy_multithreading, use_deterministic_cu
 disable_numpy_multithreading()
 use_deterministic_cuda()
 
+import argparse
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
 
 from alphazeropp.instances.doors.dsl.derivation_config import (
     DoorsDerivationConfig, DoorsDerivationConfigNoAnd,
@@ -42,7 +45,7 @@ from alphazeropp.utils.derivation_utils import run_derivation_training
 # Config display & interactive editing
 # ---------------------------------------------------------------------------
 
-def _build_sections(cfg):
+def _build_sections(cfg, seed_state=None):
     """Return sections for Doors DerivationGame config.
 
     Changing num_rooms or locs_per_room auto-updates n_sites, budget,
@@ -171,6 +174,12 @@ def _build_sections(cfg):
          "Plot metrics every N iterations", None),
     ])
 
+    if seed_state is not None:
+        params.append(
+            ("seeds", seed_state["seeds_str"],
+             lambda val: seed_state.__setitem__("seeds_str", val),
+             "Base seeds (comma-sep for multi-seed CI)", None))
+
     all_params = build_param_list(params)
 
     problem_labels = {"num_rooms", "locs_per_room", "budget",
@@ -184,7 +193,7 @@ def _build_sections(cfg):
     agent_labels = {"reward_discount"}
     trainer_labels = {"n_games_per_train", "n_past_iters", "n_procs"}
     evaluator_labels = {"eval_n_games", "eval_n_procs"}
-    run_labels = {"n_iterations", "accept_threshold", "plot_every"}
+    run_labels = {"n_iterations", "accept_threshold", "plot_every", "seeds"}
 
     return [
         ("Problem",    [p for p in all_params if p[1] in problem_labels]),
@@ -422,42 +431,248 @@ def select_mode():
     return "doors"
 
 
-def main():
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+MODE_CONFIGS = {
+    "doors": (DoorsDerivationConfig,
+              "Doors DerivationGame Config (And enabled)"),
+    "doors_no_and": (DoorsDerivationConfigNoAnd,
+                     "Doors DerivationGame Config (And disabled)"),
+    "doors_factored": (DoorsFactoredDerivationConfig,
+                       "Doors FactoredDerivationGame Config"),
+    "doors_d10_macro": (DoorsFactoredD10MacroConfig,
+                        "Doors D=10 Factored+Macro Config"),
+}
 
-    mode = select_mode()
 
-    if mode == "doors_no_and":
-        cfg = DoorsDerivationConfigNoAnd()
-        interactive_edit("Doors DerivationGame Config (And disabled)",
-                         lambda: _build_sections(cfg))
-    elif mode == "doors_factored":
-        cfg = DoorsFactoredDerivationConfig()
-        interactive_edit("Doors FactoredDerivationGame Config",
-                         lambda: _build_sections(cfg))
-    elif mode == "doors_d10_macro":
-        cfg = DoorsFactoredD10MacroConfig()
-        interactive_edit("Doors D=10 Factored+Macro Config",
-                         lambda: _build_sections(cfg))
-    else:
-        cfg = DoorsDerivationConfig()
-        interactive_edit("Doors DerivationGame Config (And enabled)",
-                         lambda: _build_sections(cfg))
+def _make_config(mode, interactive=True, seed_state=None):
+    """Create config for mode, optionally with interactive editing."""
+    cfg_cls, title = MODE_CONFIGS[mode]
+    cfg = cfg_cls()
+    if interactive:
+        interactive_edit(title, lambda: _build_sections(cfg, seed_state))
+    return cfg
 
-    # Setup experiment directory
-    exp_dir = setup_experiment_dir(cfg, mode=mode)
-    cfg.save(str(exp_dir / "config.json"))
 
-    print_banner(cfg, exp_dir, mode=mode)
-    print_architecture(cfg, mode=mode)
-
+def _compute_optimal_reward(cfg):
+    """Compute optimal reward from config parameters."""
     num_rooms = cfg.game.kwargs["num_rooms"]
     step_penalty = cfg.game.kwargs.get("step_penalty", 0.01)
     unlock_bonus = cfg.game.kwargs.get("unlock_bonus", 0.1)
     optimal_steps = 2 * (num_rooms - 1) + 1
-    optimal_reward = 1.0 + (num_rooms - 1) * unlock_bonus - optimal_steps * step_penalty
+    return 1.0 + (num_rooms - 1) * unlock_bonus - optimal_steps * step_penalty
 
-    run_derivation_training(cfg, mode, optimal_reward, exp_dir)
+
+# ---------------------------------------------------------------------------
+# Multi-seed aggregation
+# ---------------------------------------------------------------------------
+
+def _load_program_logs(seed_dirs):
+    """Load program_log.jsonl from each seed directory."""
+    logs = {}
+    for seed, seed_dir in seed_dirs.items():
+        path = seed_dir / "program_log.jsonl"
+        if not path.exists():
+            continue
+        records = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        if records:
+            logs[seed] = records
+    return logs
+
+
+def _print_seed_summary(logs, seeds):
+    """Print aggregated summary table across seeds."""
+    if not logs:
+        return
+
+    # Final iteration stats per seed
+    final_solve = []
+    final_reward = []
+    final_progs = []
+    for seed in seeds:
+        if seed not in logs or not logs[seed]:
+            continue
+        last = logs[seed][-1]
+        final_solve.append(last.get("best_solve_rate", 0))
+        final_reward.append(last.get("best_avg_reward", 0))
+        final_progs.append(last.get("unique_programs", 0))
+
+    n = len(final_solve)
+    if n == 0:
+        return
+
+    print()
+    print("=" * 70)
+    print(f"  MULTI-SEED SUMMARY  ({n} seeds: {seeds})")
+    print("=" * 70)
+    print(f"  Solve rate:    {np.mean(final_solve):.2f} ± {np.std(final_solve):.2f}")
+    print(f"  Avg reward:    {np.mean(final_reward):+.3f} ± {np.std(final_reward):.3f}")
+    print(f"  Unique progs:  {np.mean(final_progs):.0f} ± {np.std(final_progs):.0f}")
+    print()
+    print(f"  {'Seed':>6}  {'Solve':>6}  {'Reward':>8}  {'Programs':>8}")
+    print(f"  {'---':>6}  {'---':>6}  {'---':>8}  {'---':>8}")
+    for i, seed in enumerate(seeds):
+        if seed not in logs:
+            continue
+        print(f"  {seed:>6}  {final_solve[i]:>5.0%}  "
+              f"{final_reward[i]:>+8.3f}  {final_progs[i]:>8}")
+    print("=" * 70)
+
+
+def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None):
+    """Plot solve rate and reward curves with confidence bands across seeds."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    metrics = [
+        ("best_solve_rate", "Best Solve Rate", (-0.05, 1.15)),
+        ("best_avg_reward", "Best Avg Reward", None),
+    ]
+
+    fig, axes = plt.subplots(1, len(metrics), figsize=(7 * len(metrics), 5))
+    if len(metrics) == 1:
+        axes = [axes]
+
+    for ax, (metric, ylabel, ylim) in zip(axes, metrics):
+        # Collect per-seed time series
+        per_seed = []
+        for seed in seeds:
+            if seed not in logs:
+                continue
+            values = [e.get(metric, 0) for e in logs[seed]]
+            per_seed.append(values)
+
+        if not per_seed:
+            continue
+
+        min_len = min(len(v) for v in per_seed)
+        arr = np.array([v[:min_len] for v in per_seed])
+        iters = np.arange(1, min_len + 1)
+        means = arr.mean(axis=0)
+        stds = arr.std(axis=0)
+
+        ax.plot(iters, means, color="#1f77b4", linewidth=2, label="Mean")
+        if len(seeds) > 1:
+            ax.fill_between(iters, means - stds, means + stds,
+                            color="#1f77b4", alpha=0.2, label="±1 std")
+        # Plot individual seeds as thin lines
+        for i, seed in enumerate(seeds):
+            if seed in logs:
+                vals = [e.get(metric, 0) for e in logs[seed]][:min_len]
+                ax.plot(iters, vals, alpha=0.3, linewidth=1,
+                        label=f"seed {seed}")
+
+        if optimal_reward is not None and metric == "best_avg_reward":
+            ax.axhline(y=optimal_reward, color="green", linestyle=":",
+                        alpha=0.5, label=f"Optimal ({optimal_reward:.2f})")
+
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel(ylabel)
+        if ylim:
+            ax.set_ylim(ylim)
+        ax.legend(fontsize=7, loc="best")
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(f"Seed Comparison ({len(seeds)} seeds)",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    save_path = exp_dir / "seed_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Plot] Seed comparison saved to {save_path}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    """Parse CLI arguments. Returns None for interactive defaults."""
+    parser = argparse.ArgumentParser(
+        description="Doors Derivation -- AlphaZero Program Synthesis Training")
+    parser.add_argument("--mode", choices=list(MODE_CONFIGS.keys()),
+                        default=None,
+                        help="Grammar mode (default: interactive selection)")
+    parser.add_argument("--seeds", nargs="+", type=int, default=None,
+                        help="Random seeds for multi-seed runs with CI")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="Skip interactive config editing")
+    return parser.parse_args()
+
+
+def _parse_seeds(seeds_str):
+    """Parse comma-separated seed string into list of ints."""
+    return [int(s.strip()) for s in seeds_str.split(",") if s.strip()]
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    args = parse_args()
+
+    # Mode selection
+    mode = args.mode if args.mode else select_mode()
+
+    # Seed state for interactive editing
+    default_seed = cfg_seed = str(args.seeds[0]) if args.seeds else "43"
+    seed_state = {"seeds_str": default_seed}
+
+    # Config creation (seed_state is editable in interactive mode)
+    cfg = _make_config(mode, interactive=not args.non_interactive,
+                       seed_state=seed_state)
+
+    # Determine seeds: CLI --seeds overrides interactive input
+    if args.seeds and len(args.seeds) > 1:
+        seeds = args.seeds
+    else:
+        seeds = _parse_seeds(seed_state["seeds_str"])
+
+    # Setup experiment directory
+    exp_dir = setup_experiment_dir(cfg, mode=mode)
+
+    print_banner(cfg, exp_dir, mode=mode)
+    print_architecture(cfg, mode=mode)
+
+    optimal_reward = _compute_optimal_reward(cfg)
+
+    if len(seeds) <= 1:
+        # Single-seed run
+        if seeds:
+            s = seeds[0]
+            cfg.agent.random_seeds = {
+                "mcts": s, "train": s + 1,
+                "eval": s + 2, "external_policy": s + 3,
+            }
+        cfg.save(str(exp_dir / "config.json"))
+        run_derivation_training(cfg, mode, optimal_reward, exp_dir)
+    else:
+        # Multi-seed run
+        cfg.save(str(exp_dir / "config.json"))
+        seed_dirs = {}
+        for seed in seeds:
+            print()
+            print(f"{'='*70}")
+            print(f"  SEED {seed}")
+            print(f"{'='*70}")
+            cfg.agent.random_seeds = {
+                "mcts": seed, "train": seed + 1,
+                "eval": seed + 2, "external_policy": seed + 3,
+            }
+            seed_dir = exp_dir / f"seed_{seed}"
+            seed_dirs[seed] = seed_dir
+            run_derivation_training(cfg, mode, optimal_reward, seed_dir)
+
+        # Aggregate across seeds
+        logs = _load_program_logs(seed_dirs)
+        _print_seed_summary(logs, seeds)
+        _plot_seed_comparison(logs, seeds, exp_dir,
+                              optimal_reward=optimal_reward)
 
 
 if __name__ == "__main__":

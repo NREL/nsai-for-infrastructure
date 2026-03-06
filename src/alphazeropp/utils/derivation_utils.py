@@ -10,6 +10,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+_MODE_LABELS = {
+    "doors": "Flat (And)",
+    "doors_no_and": "Flat (no And)",
+    "doors_factored": "Factored",
+    "doors_d10_macro": "Macro",
+}
+
 
 def print_iteration_header(i, total):
     """Print iteration separator."""
@@ -408,7 +415,8 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
     if budget is not None:
         domain_parts.append(f"L={budget}")
     domain_str = " ".join(domain_parts)
-    title_suffix = (f"\n{mode} | {domain_str} | "
+    mode_label = _MODE_LABELS.get(mode, mode)
+    title_suffix = (f"\n{mode_label} | {domain_str} | "
                     f"sims={n_sims} games={n_games} iters={n_iters}")
 
     # Build objects
