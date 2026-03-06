@@ -118,14 +118,22 @@ def _build_sections(cfg, seed_state=None):
         "rollout_mode": "Aggregation: mean or max",
         "rollout_blend": "Blend: (1-b)*rollout + b*nn_value",
         "rollout_budget": "Max total steps for rollouts per leaf",
+        "backup_rule": "Backup strategy: mean, max, topk, softmax",
+        "backup_topk": "Top-k values for topk backup",
+        "backup_tau": "Temperature for softmax backup",
+    }
+    mcts_choices = {
+        "rollout_mode": ["mean", "max"],
+        "backup_rule": ["mean", "max", "topk", "softmax"],
     }
     for k in ["n_simulations", "temperature", "c_exploration",
               "dirichlet_alpha", "dirichlet_epsilon",
-              "rollout_n", "rollout_mode", "rollout_blend", "rollout_budget"]:
+              "rollout_n", "rollout_mode", "rollout_blend", "rollout_budget",
+              "backup_rule", "backup_topk", "backup_tau"]:
         if k in cfg.agent.mcts_params:
             params.append(
                 (k, cfg.agent.mcts_params[k], dict_setter(cfg.agent.mcts_params, k),
-                 mcts_descs[k], None))
+                 mcts_descs[k], mcts_choices.get(k)))
 
     # Network architecture
     params.extend([
@@ -188,7 +196,8 @@ def _build_sections(cfg, seed_state=None):
     mcts_labels = {"n_simulations", "temperature", "c_exploration",
                    "dirichlet_alpha", "dirichlet_epsilon",
                    "rollout_n", "rollout_mode", "rollout_blend",
-                   "rollout_budget"}
+                   "rollout_budget", "backup_rule", "backup_topk",
+                   "backup_tau"}
     net_labels = {"d_model", "n_heads", "n_layers", "learning_rate", "batch_size"}
     agent_labels = {"reward_discount"}
     trainer_labels = {"n_games_per_train", "n_past_iters", "n_procs"}

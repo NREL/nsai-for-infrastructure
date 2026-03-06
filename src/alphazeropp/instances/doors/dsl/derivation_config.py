@@ -93,6 +93,9 @@ class DoorsDerivationConfig(MetaConfig):
                 "rollout_mode": "max",
                 "rollout_blend": 0.3,
                 "rollout_budget": 200,
+                "backup_rule": "max",
+                "backup_topk": 3,
+                "backup_tau": 0.1,
             },
             reward_discount=1.0,
             random_seeds={
@@ -342,6 +345,9 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
                 "rollout_mode": "max",
                 "rollout_blend": 0.3,
                 "rollout_budget": 200,
+                "backup_rule": "max",
+                "backup_topk": 3,
+                "backup_tau": 0.1,
             },
             reward_discount=1.0,
             random_seeds={
