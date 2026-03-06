@@ -76,7 +76,7 @@ class DoorsDerivationConfig(MetaConfig):
                 "locs_per_room": locs_per_room,
                 "horizon": derived["horizon"],
                 "step_penalty": 0.01,
-                "unlock_bonus": 1.0,
+                "unlock_bonus": 0.1,
                 # LeafEvaluator sub-config
                 "metric": "weighted",
                 "penalty_lambda": 0.1,

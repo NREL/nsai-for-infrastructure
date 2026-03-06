@@ -14,7 +14,8 @@ class DoorsDirectGame(EnvGame):
     """
 
     def __init__(self, env=None, num_rooms=2, locs_per_room=2,
-                 horizon=None, use_precondition_mask=False):
+                 horizon=None, use_precondition_mask=False,
+                 step_penalty=0.01, unlock_bonus=0.1):
         if env is None:
             if num_rooms < 2:
                 raise ValueError(f"num_rooms must be >= 2, got {num_rooms}")
@@ -29,6 +30,8 @@ class DoorsDirectGame(EnvGame):
                 loc_room=loc_room,
                 key_loc=key_loc,
                 horizon=horizon,
+                step_penalty=step_penalty,
+                unlock_bonus=unlock_bonus,
             )
         super().__init__(env)
         self._num_rooms = num_rooms

@@ -12,6 +12,7 @@ from alphazeropp.utils import disable_numpy_multithreading, use_deterministic_cu
 disable_numpy_multithreading()
 use_deterministic_cuda()
 
+import argparse
 import json
 import logging
 import time
@@ -26,14 +27,12 @@ from alphazeropp.utils.interactive_config import (
     build_param_list, interactive_edit, attr_setter, dict_setter,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-
 
 # ---------------------------------------------------------------------------
 # Interactive config editing
 # ---------------------------------------------------------------------------
 
-def _build_sections(cfg):
+def _build_sections(cfg, seed_state=None):
     """Return sections for Doors Direct Play config."""
 
     def _update_dims():
@@ -61,6 +60,12 @@ def _build_sections(cfg):
          "Number of rooms (D>=2, higher=harder)", None),
         ("locs_per_room", locs_per_room, _set_locs_per_room,
          "Locations per room (more=larger action space)", None),
+        ("step_penalty", cfg.game.kwargs.get("step_penalty", 0.01),
+         dict_setter(cfg.game.kwargs, "step_penalty"),
+         "Per-step penalty", None),
+        ("unlock_bonus", cfg.game.kwargs.get("unlock_bonus", 0.1),
+         dict_setter(cfg.game.kwargs, "unlock_bonus"),
+         "Bonus for unlocking a room", None),
         ("use_precondition_mask", cfg.game.kwargs.get("use_precondition_mask", False),
          dict_setter(cfg.game.kwargs, "use_precondition_mask"),
          "Precondition-aware action masking", None),
@@ -111,15 +116,22 @@ def _build_sections(cfg):
          "Plot metrics every N iterations", None),
     ])
 
+    if seed_state is not None:
+        params.append(
+            ("seeds", seed_state["seeds_str"],
+             lambda val: seed_state.__setitem__("seeds_str", val),
+             "Base seeds (comma-sep for multi-seed CI)", None))
+
     all_params = build_param_list(params)
 
-    env_labels = {"num_rooms", "locs_per_room", "use_precondition_mask"}
+    env_labels = {"num_rooms", "locs_per_room", "step_penalty",
+                  "unlock_bonus", "use_precondition_mask"}
     mcts_labels = {"n_simulations", "temperature", "c_exploration",
                    "dirichlet_alpha", "dirichlet_epsilon"}
     agent_labels = {"reward_discount"}
     trainer_labels = {"n_games_per_train", "n_past_iters", "n_procs"}
     evaluator_labels = {"eval_n_games", "eval_n_procs"}
-    run_labels = {"n_iterations", "accept_threshold", "plot_every"}
+    run_labels = {"n_iterations", "accept_threshold", "plot_every", "seeds"}
 
     return [
         ("Environment", [p for p in all_params if p[1] in env_labels]),
@@ -254,9 +266,8 @@ def print_banner(cfg, game, exp_dir):
     print(sep)
     print(f"  Doors D={num_rooms} Direct Play -- AlphaZero Training")
     print(sep)
-    # --- Problem Setup ---
     print()
-    print(f"  Problem Setup (D={num_rooms}, {locs_per_room} locs/room):")
+    print(f"  PROBLEM (D={num_rooms}, {locs_per_room} locs/room)")
     print()
 
     # Room layout diagram
@@ -264,7 +275,7 @@ def print_banner(cfg, game, exp_dir):
     print()
 
     # Key dependency chain
-    print("  Key Dependencies (sequential chain):")
+    print("  KEY DEPENDENCIES (sequential chain)")
     for k in range(env.K):
         key_room = env.loc_room[env.key_loc[k]]
         print(f"    key {k} (loc {env.key_loc[k]}, room {key_room})"
@@ -279,7 +290,7 @@ def print_banner(cfg, game, exp_dir):
         opt_actions.append(f"MOVE_TO({env.key_loc[k]})")
         opt_actions.append(f"PICK({k})")
     opt_actions.append(f"MOVE_TO({env.goal_loc})")
-    print(f"  Optimal Plan ({optimal_steps} steps):")
+    print(f"  OPTIMAL PLAN ({optimal_steps} steps)")
     # Print in rows of ~5 actions
     for row_start in range(0, len(opt_actions), 5):
         chunk = opt_actions[row_start:row_start + 5]
@@ -290,7 +301,7 @@ def print_banner(cfg, game, exp_dir):
 
     # Reward breakdown
     opt_reward = _optimal_reward(num_rooms, env.step_penalty, env.unlock_bonus)
-    print(f"  Rewards:")
+    print(f"  REWARDS")
     print(f"    goal         = +1.00")
     print(f"    unlock_bonus = +{env.unlock_bonus:.2f}/key"
           f"  ({K} keys = +{K * env.unlock_bonus:.2f})")
@@ -303,7 +314,7 @@ def print_banner(cfg, game, exp_dir):
     # Dimensions summary
     n_real = env.M + env.K + 1
     n_pad = dims["obs_size"] - n_real
-    print(f"  Dimensions:")
+    print(f"  DIMENSIONS")
     print(f"    Obs size:     {dims['obs_size']}"
           f"  ({env.M} locs + {env.D} rooms + {env.K} keys)")
     print(f"    Action space: {dims['obs_size']}"
@@ -313,7 +324,7 @@ def print_banner(cfg, game, exp_dir):
     print()
 
     # Action semantics
-    print("  Actions:")
+    print("  ACTIONS")
     print("    MOVE_TO(l)  Teleport agent to location l. If the room containing l")
     print("                is locked, the action is silently ignored (no-op).")
     print("    PICK(k)     Pick up key k. Requires agent at key_loc[k] and key k")
@@ -324,7 +335,7 @@ def print_banner(cfg, game, exp_dir):
     print()
 
     # Training hyperparameters
-    print("  Training:")
+    print("  TRAINING")
     mp = cfg.agent.mcts_params
     print(f"    MCTS simulations:    {mp['n_simulations']}")
     print(f"    Exploration (c):     {mp['c_exploration']}")
@@ -339,7 +350,7 @@ def print_banner(cfg, game, exp_dir):
     print()
 
     # Explain precondition masking
-    print("  Action Masking:")
+    print("  ACTION MASKING")
     if use_mask:
         print("    Mode: PRECONDITION-AWARE (enabled)")
         print("    Only actions whose PDDL preconditions are satisfied are valid.")
@@ -883,55 +894,215 @@ def render_policy_gif(trace, final_obs, env, save_path, fps=2):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Multi-seed aggregation
 # ---------------------------------------------------------------------------
 
-def main():
-    cfg = DoorsDirectConfig()
+def _load_iteration_logs(seed_dirs):
+    """Load iteration_log.jsonl from each seed directory."""
+    logs = {}
+    for seed, seed_dir in seed_dirs.items():
+        path = seed_dir / "iteration_log.jsonl"
+        if not path.exists():
+            continue
+        records = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        if records:
+            logs[seed] = records
+    return logs
 
-    # Interactive config editing
-    interactive_edit("Doors Direct Play Config", lambda: _build_sections(cfg))
 
-    # Setup experiment directory
-    exp_dir = setup_experiment_dir(cfg)
+def _load_train_stats(seed_dirs):
+    """Load train_stats.jsonl from each seed directory."""
+    stats = {}
+    for seed, seed_dir in seed_dirs.items():
+        path = seed_dir / "train_stats.jsonl"
+        if not path.exists():
+            continue
+        records = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        if records:
+            stats[seed] = records
+    return stats
 
-    # Save config
+
+def _print_seed_summary(logs, seeds):
+    """Print aggregated summary table across seeds."""
+    if not logs:
+        return
+
+    final_solve = []
+    final_reward = []
+    for seed in seeds:
+        if seed not in logs or not logs[seed]:
+            continue
+        last = logs[seed][-1]
+        final_solve.append(last.get("best_solve_rate", 0))
+        final_reward.append(last.get("avg_eval_reward", 0))
+
+    n = len(final_solve)
+    if n == 0:
+        return
+
+    print()
+    print("=" * 70)
+    print(f"  MULTI-SEED SUMMARY  ({n} seeds: {seeds})")
+    print("=" * 70)
+    print(f"  Solve rate:    {np.mean(final_solve):.2f} +/- {np.std(final_solve):.2f}")
+    print(f"  Avg reward:    {np.mean(final_reward):+.3f} +/- {np.std(final_reward):.3f}")
+    print()
+    print(f"  {'Seed':>6}  {'Solve':>6}  {'Reward':>8}")
+    print(f"  {'---':>6}  {'---':>6}  {'---':>8}")
+    for i, seed in enumerate(seeds):
+        if seed not in logs:
+            continue
+        print(f"  {seed:>6}  {final_solve[i]:>5.0%}  "
+              f"{final_reward[i]:>+8.3f}")
+    print("=" * 70)
+
+
+def _sausage_panel(ax, seeds, data_dict, extractor, ylabel,
+                   color="#1f77b4", label=None, ylim=None, yscale=None,
+                   hline=None, overlay=False):
+    """Plot mean line + std band + individual seed traces on ax."""
+    if isinstance(extractor, str):
+        key = extractor
+        extractor = lambda r, _k=key: r.get(_k, 0)
+
+    per_seed = []
+    for seed in seeds:
+        if seed not in data_dict:
+            continue
+        values = [extractor(e) for e in data_dict[seed]]
+        per_seed.append(values)
+
+    if not per_seed:
+        return
+
+    min_len = min(len(v) for v in per_seed)
+    arr = np.array([v[:min_len] for v in per_seed])
+    iters = np.arange(1, min_len + 1)
+    means = arr.mean(axis=0)
+    stds = arr.std(axis=0)
+
+    lbl = label or ylabel
+    ax.plot(iters, means, color=color, linewidth=2, label=lbl)
+    if len(per_seed) > 1:
+        ax.fill_between(iters, means - stds, means + stds,
+                        color=color, alpha=0.15)
+    for vals in per_seed:
+        ax.plot(np.arange(1, min_len + 1), vals[:min_len],
+                color=color, alpha=0.2, linewidth=0.8)
+
+    if not overlay:
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+    if ylim:
+        ax.set_ylim(ylim)
+    if yscale:
+        ax.set_yscale(yscale)
+    if hline:
+        ax.axhline(y=hline[0], color=hline[2], linestyle=":",
+                    alpha=0.5, label=hline[1])
+    ax.legend(fontsize=7, loc="best")
+
+
+def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None,
+                          train_stats=None):
+    """Plot 2x3 grid of sausage plots across seeds."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    fig, axes = plt.subplots(2, 3, figsize=(21, 10))
+
+    # (0,0) Best Solve Rate
+    _sausage_panel(axes[0, 0], seeds, logs, "best_solve_rate",
+                   "Best Solve Rate", color="#1f77b4",
+                   ylim=(-0.05, 1.15))
+    axes[0, 0].set_title("Best Solve Rate")
+
+    # (0,1) Avg Eval Reward
+    hline_arg = None
+    if optimal_reward is not None:
+        hline_arg = (optimal_reward, f"Optimal ({optimal_reward:.2f})", "green")
+    _sausage_panel(axes[0, 1], seeds, logs, "avg_eval_reward",
+                   "Avg Eval Reward", color="#1f77b4", hline=hline_arg)
+    axes[0, 1].set_title("Avg Eval Reward")
+
+    # (0,2) Training Loss
+    if train_stats:
+        _sausage_panel(axes[0, 2], seeds, train_stats, "train_loss_policy",
+                       "Loss", color="#d62728", label="Policy Loss")
+        _sausage_panel(axes[0, 2], seeds, train_stats, "train_loss_value",
+                       "Loss", color="#2ca02c", label="Value Loss",
+                       overlay=True, yscale="log")
+        axes[0, 2].set_title("Training Loss")
+    else:
+        axes[0, 2].text(0.5, 0.5, "No train_stats data",
+                        transform=axes[0, 2].transAxes,
+                        ha="center", va="center", fontsize=10, color="gray")
+        axes[0, 2].set_title("Training Loss")
+
+    # (1,0) Solve Rate
+    _sausage_panel(axes[1, 0], seeds, logs, "solve_rate",
+                   "Solve Rate", color="#9467bd")
+    axes[1, 0].set_title("Solve Rate")
+
+    # (1,1) Wall Clock per Iteration
+    _sausage_panel(axes[1, 1], seeds, logs, "wall_clock_s",
+                   "Wall Clock (s)", color="#8c564b")
+    axes[1, 1].set_title("Wall Clock / Iteration")
+
+    # (1,2) Self-Play Avg Reward
+    if train_stats:
+        _sausage_panel(axes[1, 2], seeds, train_stats, "avg_reward",
+                       "Self-Play Avg Reward", color="#ff7f0e")
+        axes[1, 2].set_title("Self-Play Avg Reward")
+    else:
+        axes[1, 2].text(0.5, 0.5, "No train_stats data",
+                        transform=axes[1, 2].transAxes,
+                        ha="center", va="center", fontsize=10, color="gray")
+        axes[1, 2].set_title("Self-Play Avg Reward")
+
+    fig.suptitle(f"Seed Comparison ({len(seeds)} seeds)",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    save_path = exp_dir / "seed_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Plot] Seed comparison saved to {save_path}")
+
+
+# ---------------------------------------------------------------------------
+# Single-seed training run
+# ---------------------------------------------------------------------------
+
+def _run_single_seed(cfg, exp_dir):
+    """Run a single-seed training loop. Returns iteration_log."""
     num_rooms = cfg.game.kwargs.get("num_rooms", 2)
-    locs_per_room = cfg.game.kwargs.get("locs_per_room", 2)
-    config_data = {
-        "game": {"kwargs": cfg.game.kwargs},
-        "net": {"kwargs": cfg.net.kwargs},
-        "agent": {
-            "mcts_params": cfg.agent.mcts_params,
-            "reward_discount": cfg.agent.reward_discount,
-        },
-        "trainer": {
-            "n_games_per_train": cfg.trainer.n_games_per_train,
-            "n_past_iterations_to_train": cfg.trainer.n_past_iterations_to_train,
-        },
-        "run": {
-            "n_iterations": cfg.run.n_iterations,
-            "accept_threshold": cfg.run.accept_threshold,
-        },
-    }
-    with open(exp_dir / "config.json", "w") as f:
-        json.dump(config_data, f, indent=2)
-
-    # Build pipeline
     game, net, agent, trainer, evaluator = cfg.build()
     use_gating = cfg.run.accept_threshold > 0
     gated = GatedTrainer(trainer, evaluator, cfg.run.accept_threshold) if use_gating else None
 
-    # Print startup info
-    print_banner(cfg, game, exp_dir)
-    print_architecture(cfg)
-
-    # Training loop
     iteration_log = []
     best_solve_rate = 0.0
     best_solve_iter = 0
     n_accepted = 0
-    optimal = _optimal_reward(num_rooms)
+    optimal = _optimal_reward(num_rooms,
+                              cfg.game.kwargs.get("step_penalty", 0.01),
+                              cfg.game.kwargs.get("unlock_bonus", 0.1))
     n_sims = cfg.agent.mcts_params.get("n_simulations", "?")
     n_games = cfg.trainer.n_games_per_train
     n_iters = cfg.run.n_iterations
@@ -952,18 +1123,15 @@ def main():
         if accepted:
             n_accepted += 1
 
-        # Compute solve rate
         solve_rate, avg_eval_reward = compute_solve_rate(agent, n_episodes=20)
         if solve_rate > best_solve_rate:
             best_solve_rate = solve_rate
             best_solve_iter = i + 1
 
-        # Collect training stats
         train_records = trainer.statistics_manager.to_list()
         avg_train_reward = 0.0
         if train_records:
-            last = train_records[-1]
-            avg_train_reward = last.get("avg_reward", 0.0)
+            avg_train_reward = train_records[-1].get("avg_reward", 0.0)
 
         entry = {
             "iteration": i + 1,
@@ -977,11 +1145,11 @@ def main():
         }
         iteration_log.append(entry)
 
-        # Print iteration summary
         print_iteration_summary(
             i + 1, cfg.run.n_iterations, score, accepted,
             solve_rate, best_solve_rate,
-            trainer.statistics_manager, evaluator.statistics_manager if use_gating else None,
+            trainer.statistics_manager,
+            evaluator.statistics_manager if use_gating else None,
             elapsed,
             avg_eval_reward=avg_eval_reward,
         )
@@ -1000,26 +1168,19 @@ def main():
         eval_stats = evaluator.statistics_manager if use_gating else None
         if (i + 1) % cfg.run.plot_every == 0:
             plot_training_metrics(
-                trainer.statistics_manager,
-                eval_stats,
-                iteration_log,
-                save_path=cfg.run.plot_path,
-                optimal_reward=optimal,
-                num_rooms=num_rooms,
-                title=plot_title,
+                trainer.statistics_manager, eval_stats, iteration_log,
+                save_path=cfg.run.plot_path, optimal_reward=optimal,
+                num_rooms=num_rooms, title=plot_title,
             )
 
     # Final plot
+    eval_stats = evaluator.statistics_manager if use_gating else None
     plot_training_metrics(
-        trainer.statistics_manager,
-        eval_stats if use_gating else None,
-        iteration_log,
-        save_path=cfg.run.plot_path,
-        optimal_reward=optimal,
-        num_rooms=num_rooms,
-        title=plot_title,
+        trainer.statistics_manager, eval_stats, iteration_log,
+        save_path=cfg.run.plot_path, optimal_reward=optimal,
+        num_rooms=num_rooms, title=plot_title,
     )
-    final_plot = rename_plot_with_stats(cfg, iteration_log)
+    rename_plot_with_stats(cfg, iteration_log)
 
     # Final summary
     sep = "=" * 80
@@ -1046,13 +1207,111 @@ def main():
     # Generate animated GIF of the final policy
     gif_path = exp_dir / "policy_animation.gif"
     render_policy_gif(trace, final_obs, game.env, gif_path, fps=2)
-
-    print(f"  Output: {exp_dir}/")
-    print(f"    config.json            iteration_log.jsonl")
-    print(f"    train_stats.jsonl      eval_stats.jsonl")
-    print(f"    {Path(final_plot).name}")
-    print(f"    policy_animation.gif")
     print(sep)
+
+    return iteration_log
+
+
+# ---------------------------------------------------------------------------
+# CLI & Main
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    """Parse CLI arguments."""
+    parser = argparse.ArgumentParser(
+        description="Doors Direct Play -- AlphaZero Training")
+    parser.add_argument("--seeds", nargs="+", type=int, default=None,
+                        help="Random seeds for multi-seed runs")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="Skip interactive config editing")
+    return parser.parse_args()
+
+
+def _parse_seeds(seeds_str):
+    """Parse comma-separated seed string into list of ints."""
+    return [int(s.strip()) for s in seeds_str.split(",") if s.strip()]
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    args = parse_args()
+
+    # Seed state for interactive editing
+    default_seed = str(args.seeds[0]) if args.seeds else "43"
+    seed_state = {"seeds_str": default_seed}
+
+    cfg = DoorsDirectConfig()
+
+    # Interactive config editing
+    if not args.non_interactive:
+        interactive_edit("Doors Direct Play Config",
+                         lambda: _build_sections(cfg, seed_state))
+
+    # Determine seeds
+    if args.seeds and len(args.seeds) > 1:
+        seeds = args.seeds
+    else:
+        seeds = _parse_seeds(seed_state["seeds_str"])
+
+    # Setup experiment directory
+    exp_dir = setup_experiment_dir(cfg)
+
+    # Build a temporary game for banner display (needs env for layout info)
+    from alphazeropp.instances.doors.game import DoorsDirectGame
+    _banner_game = DoorsDirectGame(**cfg.game.kwargs)
+
+    # Print startup info
+    print_banner(cfg, _banner_game, exp_dir)
+    print_architecture(cfg)
+
+    # Save config
+    cfg.save(str(exp_dir / "config.json"))
+
+    optimal = _optimal_reward(
+        cfg.game.kwargs.get("num_rooms", 2),
+        cfg.game.kwargs.get("step_penalty", 0.01),
+        cfg.game.kwargs.get("unlock_bonus", 0.1))
+
+    if len(seeds) <= 1:
+        # Single-seed run
+        if seeds:
+            s = seeds[0]
+            cfg.agent.random_seeds = {
+                "mcts": s, "train": s + 1,
+                "eval": s + 2, "external_policy": s + 3,
+            }
+        _run_single_seed(cfg, exp_dir)
+    else:
+        # Multi-seed run
+        seed_dirs = {}
+        for seed in seeds:
+            print()
+            print(f"{'='*70}")
+            print(f"  SEED {seed}")
+            print(f"{'='*70}")
+            cfg.agent.random_seeds = {
+                "mcts": seed, "train": seed + 1,
+                "eval": seed + 2, "external_policy": seed + 3,
+            }
+            seed_dir = exp_dir / f"seed_{seed}"
+            seed_dir.mkdir(parents=True, exist_ok=True)
+            cfg.trainer.checkpoint_dir = str(seed_dir / "checkpoints")
+            cfg.run.plot_path = str(seed_dir / "training_metrics.png")
+            seed_dirs[seed] = seed_dir
+            _run_single_seed(cfg, seed_dir)
+
+        # Aggregate across seeds
+        logs = _load_iteration_logs(seed_dirs)
+        train_stats = _load_train_stats(seed_dirs)
+        _print_seed_summary(logs, seeds)
+        _plot_seed_comparison(logs, seeds, exp_dir,
+                              optimal_reward=optimal,
+                              train_stats=train_stats)
+
+        print()
+        print("[Analysis] Plots saved. Key things to look for:")
+        print("  - seed_comparison.png: Do seeds converge? "
+              "High variance = unstable training")
 
 
 if __name__ == "__main__":

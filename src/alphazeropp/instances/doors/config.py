@@ -50,6 +50,8 @@ class DoorsDirectConfig(MetaConfig):
             kwargs={
                 "num_rooms": num_rooms,
                 "locs_per_room": locs_per_room,
+                "step_penalty": 0.01,
+                "unlock_bonus": 0.1,
             },
         )
         self.net = NetConfig(
@@ -80,12 +82,12 @@ class DoorsDirectConfig(MetaConfig):
         self.trainer = TrainerConfig(
             n_games_per_train=50,
             n_past_iterations_to_train=20,
-            n_procs=-1,
+            n_procs=8,
             checkpoint_dir="checkpoints",
         )
         self.evaluator = EvaluatorConfig(
             n_games=20,
-            n_procs=-1,
+            n_procs=8,
         )
         self.run = RunConfig(
             n_iterations=50,

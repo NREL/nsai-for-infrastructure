@@ -125,6 +125,22 @@ class DoorsDirectNet(TorchPolicyValueNet):
 
         return model, train_batch_losses, train_losses, policy_losses, value_losses
 
+    def push_multiprocessing(self):
+        """Move model AND optimizer state to CPU for pickling."""
+        self.model.to("cpu")
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.cpu()
+
+    def pop_multiprocessing(self, *args):
+        """Restore model and optimizer state to training device."""
+        self.model.to(self.DEVICE)
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(self.DEVICE)
+
     def predict(self, state):
         self.model.cpu()
         nn_input = torch.tensor(state, dtype=torch.float32).reshape(1, -1)
