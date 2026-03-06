@@ -105,7 +105,11 @@ def _build_sections(cfg, seed_state=None):
         params.append(
             ("blend_alpha", cfg.game.kwargs["blend_alpha"],
              dict_setter(cfg.game.kwargs, "blend_alpha"),
-             "Weight of solve_rate in blend", None))
+             "Weight of solve_rate in blend (adaptive: uses raw reward when sr=0)", None))
+    params.append(
+        ("normalize_rewards", cfg.game.kwargs.get("normalize_rewards", False),
+         dict_setter(cfg.game.kwargs, "normalize_rewards"),
+         "Normalize leaf eval rewards via running EMA", None))
 
     # MCTS
     mcts_descs = {
@@ -192,7 +196,7 @@ def _build_sections(cfg, seed_state=None):
 
     problem_labels = {"num_rooms", "locs_per_room", "budget",
                       "horizon", "budget_mode", "allow_and"}
-    eval_labels = {"metric", "penalty_lambda", "blend_alpha"}
+    eval_labels = {"metric", "penalty_lambda", "blend_alpha", "normalize_rewards"}
     mcts_labels = {"n_simulations", "temperature", "c_exploration",
                    "dirichlet_alpha", "dirichlet_epsilon",
                    "rollout_n", "rollout_mode", "rollout_blend",
@@ -523,6 +527,24 @@ def _load_program_logs(seed_dirs):
     return logs
 
 
+def _load_train_stats(seed_dirs):
+    """Load train_stats.jsonl from each seed directory."""
+    stats = {}
+    for seed, seed_dir in seed_dirs.items():
+        path = seed_dir / "train_stats.jsonl"
+        if not path.exists():
+            continue
+        records = []
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        if records:
+            stats[seed] = records
+    return stats
+
+
 def _print_seed_summary(logs, seeds):
     """Print aggregated summary table across seeds."""
     if not logs:
@@ -562,8 +584,78 @@ def _print_seed_summary(logs, seeds):
     print("=" * 70)
 
 
-def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None):
-    """Plot solve rate and reward curves with confidence bands across seeds."""
+def _sausage_panel(ax, seeds, data_dict, extractor, ylabel,
+                   color="#1f77b4", label=None, ylim=None, yscale=None,
+                   hline=None, overlay=False):
+    """Plot mean line + std band + individual seed traces on ax.
+
+    Args:
+        ax: matplotlib Axes
+        seeds: list of seed values
+        data_dict: {seed: [records]}
+        extractor: str key or callable(record) -> float
+        ylabel: y-axis label
+        color: line/fill color
+        label: legend label (defaults to ylabel)
+        ylim: optional (ymin, ymax)
+        yscale: optional "log"
+        hline: optional (value, label_str, color_str) for reference line
+        overlay: if True, skip xlabel/ylabel (for dual-metric panels)
+    """
+    if isinstance(extractor, str):
+        key = extractor
+        extractor = lambda r, _k=key: r.get(_k, 0)
+
+    per_seed = []
+    seed_list = []
+    for seed in seeds:
+        if seed not in data_dict:
+            continue
+        values = [extractor(e) for e in data_dict[seed]]
+        per_seed.append(values)
+        seed_list.append(seed)
+
+    if not per_seed:
+        return
+
+    min_len = min(len(v) for v in per_seed)
+    arr = np.array([v[:min_len] for v in per_seed])
+    iters = np.arange(1, min_len + 1)
+    means = arr.mean(axis=0)
+    stds = arr.std(axis=0)
+
+    lbl = label or ylabel
+    ax.plot(iters, means, color=color, linewidth=2, label=lbl)
+    if len(per_seed) > 1:
+        ax.fill_between(iters, means - stds, means + stds,
+                        color=color, alpha=0.15)
+    # Individual seed traces (no legend entry to avoid clutter)
+    for vals in per_seed:
+        ax.plot(np.arange(1, min_len + 1), vals[:min_len],
+                color=color, alpha=0.2, linewidth=0.8)
+
+    if not overlay:
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+    if ylim:
+        ax.set_ylim(ylim)
+    if yscale:
+        ax.set_yscale(yscale)
+    if hline:
+        ax.axhline(y=hline[0], color=hline[2], linestyle=":",
+                    alpha=0.5, label=hline[1])
+    ax.legend(fontsize=7, loc="best")
+
+
+def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None,
+                          train_stats=None):
+    """Plot 2x3 grid of sausage plots across seeds.
+
+    Panels:
+      (0,0) Best Solve Rate    (0,1) Best Avg Reward    (0,2) Training Loss
+      (1,0) Unique Programs    (1,1) Wall Clock / Iter   (1,2) Self-Play Reward
+    """
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -571,22 +663,107 @@ def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None):
     except ImportError:
         return
 
-    metrics = [
-        ("best_solve_rate", "Best Solve Rate", (-0.05, 1.15)),
-        ("best_avg_reward", "Best Avg Reward", None),
+    fig, axes = plt.subplots(2, 3, figsize=(21, 10))
+
+    # (0,0) Best Solve Rate
+    _sausage_panel(axes[0, 0], seeds, logs, "best_solve_rate",
+                   "Best Solve Rate", color="#1f77b4",
+                   ylim=(-0.05, 1.15))
+    axes[0, 0].set_title("Best Solve Rate")
+
+    # (0,1) Best Avg Reward
+    hline_arg = None
+    if optimal_reward is not None:
+        hline_arg = (optimal_reward, f"Optimal ({optimal_reward:.2f})", "green")
+    _sausage_panel(axes[0, 1], seeds, logs, "best_avg_reward",
+                   "Best Avg Reward", color="#1f77b4", hline=hline_arg)
+    axes[0, 1].set_title("Best Avg Reward")
+
+    # (0,2) Training Loss (dual: policy + value, log scale)
+    if train_stats:
+        _sausage_panel(axes[0, 2], seeds, train_stats, "train_loss_policy",
+                       "Loss", color="#d62728", label="Policy Loss")
+        _sausage_panel(axes[0, 2], seeds, train_stats, "train_loss_value",
+                       "Loss", color="#2ca02c", label="Value Loss",
+                       overlay=True, yscale="log")
+        axes[0, 2].set_title("Training Loss")
+    else:
+        axes[0, 2].text(0.5, 0.5, "No train_stats data",
+                        transform=axes[0, 2].transAxes,
+                        ha="center", va="center", fontsize=10, color="gray")
+        axes[0, 2].set_title("Training Loss")
+
+    # (1,0) Unique Programs
+    _sausage_panel(axes[1, 0], seeds, logs, "unique_programs",
+                   "Unique Programs", color="#9467bd")
+    axes[1, 0].set_title("Unique Programs")
+
+    # (1,1) Wall Clock per Iteration
+    _sausage_panel(axes[1, 1], seeds, logs, "iter_wall_clock",
+                   "Wall Clock (s)", color="#8c564b")
+    axes[1, 1].set_title("Wall Clock / Iteration")
+
+    # (1,2) Self-Play Avg Reward
+    if train_stats:
+        _sausage_panel(axes[1, 2], seeds, train_stats, "avg_reward",
+                       "Self-Play Avg Reward", color="#ff7f0e")
+        axes[1, 2].set_title("Self-Play Avg Reward")
+    else:
+        axes[1, 2].text(0.5, 0.5, "No train_stats data",
+                        transform=axes[1, 2].transAxes,
+                        ha="center", va="center", fontsize=10, color="gray")
+        axes[1, 2].set_title("Self-Play Avg Reward")
+
+    fig.suptitle(f"Seed Comparison ({len(seeds)} seeds)",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    save_path = exp_dir / "seed_comparison.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Plot] Seed comparison saved to {save_path}")
+
+
+def _plot_seed_deltas(logs, seeds, exp_dir):
+    """Plot per-iteration deltas to reveal stagnation and trends.
+
+    Panels:
+      (0) New Programs per Iteration   (1) Reward Improvement   (2) Wall Clock Trend
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    def _delta_extractor(key):
+        """Return extractor that computes per-iteration delta from cumulative series."""
+        def extract(records):
+            values = [r.get(key, 0) for r in records]
+            deltas = [values[0]] + [values[i] - values[i - 1]
+                                     for i in range(1, len(values))]
+            return deltas
+        return extract
+
+    fig, axes = plt.subplots(1, 3, figsize=(21, 5))
+
+    # Compute deltas per seed and plot
+    panels = [
+        ("unique_programs", "New Programs / Iter", "#9467bd"),
+        ("best_avg_reward", "Reward Improvement / Iter", "#1f77b4"),
+        ("iter_wall_clock", "Wall Clock (s)", "#8c564b"),
     ]
 
-    fig, axes = plt.subplots(1, len(metrics), figsize=(7 * len(metrics), 5))
-    if len(metrics) == 1:
-        axes = [axes]
-
-    for ax, (metric, ylabel, ylim) in zip(axes, metrics):
-        # Collect per-seed time series
+    for ax, (key, ylabel, color) in zip(axes, panels):
         per_seed = []
         for seed in seeds:
             if seed not in logs:
                 continue
-            values = [e.get(metric, 0) for e in logs[seed]]
+            if key == "iter_wall_clock":
+                # Wall clock is already per-iteration, not cumulative
+                values = [r.get(key, 0) for r in logs[seed]]
+            else:
+                values = _delta_extractor(key)(logs[seed])
             per_seed.append(values)
 
         if not per_seed:
@@ -598,35 +775,27 @@ def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None):
         means = arr.mean(axis=0)
         stds = arr.std(axis=0)
 
-        ax.plot(iters, means, color="#1f77b4", linewidth=2, label="Mean")
-        if len(seeds) > 1:
+        ax.plot(iters, means, color=color, linewidth=2, label="Mean")
+        if len(per_seed) > 1:
             ax.fill_between(iters, means - stds, means + stds,
-                            color="#1f77b4", alpha=0.2, label="±1 std")
-        # Plot individual seeds as thin lines
-        for i, seed in enumerate(seeds):
-            if seed in logs:
-                vals = [e.get(metric, 0) for e in logs[seed]][:min_len]
-                ax.plot(iters, vals, alpha=0.3, linewidth=1,
-                        label=f"seed {seed}")
-
-        if optimal_reward is not None and metric == "best_avg_reward":
-            ax.axhline(y=optimal_reward, color="green", linestyle=":",
-                        alpha=0.5, label=f"Optimal ({optimal_reward:.2f})")
+                            color=color, alpha=0.15)
+        for vals in per_seed:
+            ax.plot(np.arange(1, min_len + 1), vals[:min_len],
+                    color=color, alpha=0.2, linewidth=0.8)
 
         ax.set_xlabel("Iteration")
         ax.set_ylabel(ylabel)
-        if ylim:
-            ax.set_ylim(ylim)
-        ax.legend(fontsize=7, loc="best")
+        ax.set_title(ylabel)
         ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=7, loc="best")
 
-    fig.suptitle(f"Seed Comparison ({len(seeds)} seeds)",
-                 fontsize=13, fontweight="bold")
+    fig.suptitle(f"Per-Iteration Deltas ({len(seeds)} seeds)",
+                 fontsize=14, fontweight="bold")
     plt.tight_layout()
-    save_path = exp_dir / "seed_comparison.png"
+    save_path = exp_dir / "seed_deltas.png"
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"[Plot] Seed comparison saved to {save_path}")
+    print(f"[Plot] Seed deltas saved to {save_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -710,9 +879,21 @@ def main():
 
         # Aggregate across seeds
         logs = _load_program_logs(seed_dirs)
+        train_stats = _load_train_stats(seed_dirs)
         _print_seed_summary(logs, seeds)
         _plot_seed_comparison(logs, seeds, exp_dir,
-                              optimal_reward=optimal_reward)
+                              optimal_reward=optimal_reward,
+                              train_stats=train_stats)
+        _plot_seed_deltas(logs, seeds, exp_dir)
+
+        print()
+        print("[Analysis] Plots saved. Key things to look for:")
+        print("  - seed_comparison.png: Do seeds converge? "
+              "High variance = unstable training")
+        print("  - seed_deltas.png: Flat delta curves = stagnation, "
+              "consider stopping early")
+        print("  - If wall clock grows: check cache size / "
+              "tree reuse overhead")
 
 
 if __name__ == "__main__":

@@ -539,6 +539,14 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
             best_program_ast, best_program_metrics, leaf_eval,
         )
 
+    # Post-experiment diagnostic report
+    try:
+        from alphazeropp.utils.post_diagnostics import run_post_diagnostics
+        diag_report = run_post_diagnostics(exp_dir)
+    except Exception as e:
+        diag_report = ""
+        print(f"[Diagnostics] Warning: failed to generate report: {e}")
+
     print(f"Training complete. Results saved to: {exp_dir}/")
     print(f"  Config:       {exp_dir / 'config.json'}")
     print(f"  Plot:         {final_plot}")
@@ -546,4 +554,6 @@ def run_derivation_training(cfg, mode, optimal_reward, exp_dir,
     print(f"  Eval log:     {exp_dir / 'eval_stats.jsonl'}")
     print(f"  Program log:  {exp_dir / 'program_log.jsonl'}")
     print(f"  Diagnostics:  {exp_dir / 'diagnostics.jsonl'}")
+    if diag_report:
+        print(f"  Diag report:  {diag_report}")
     print(f"  Programs evaluated: {leaf_eval.stats()['unique_programs']}")

@@ -53,6 +53,8 @@ class LeafEvaluator:
             raise ValueError(
                 f"Unknown metric {metric!r}, must be one of {VALID_METRICS}"
             )
+        if metric == "keys_progress" and progress_fn is None:
+            raise ValueError("keys_progress metric requires progress_fn")
         self.n_sites = n_sites
         self.is_solved = is_solved
         self.frozen_states = list(frozen_states)
@@ -276,6 +278,7 @@ class LeafEvaluator:
             self._ema_var = 1.0
         else:
             d = self._ema_decay
+            delta = value - self._ema_mean
             self._ema_mean = d * self._ema_mean + (1 - d) * value
-            self._ema_var = d * self._ema_var + (1 - d) * (value - self._ema_mean) ** 2
+            self._ema_var = d * self._ema_var + (1 - d) * delta ** 2
         return (value - self._ema_mean) / (self._ema_var ** 0.5 + 1e-8)
