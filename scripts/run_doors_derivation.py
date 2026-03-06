@@ -507,7 +507,7 @@ def _compute_optimal_reward(cfg):
 
 def _generate_reward_reference(cfg, exp_dir):
     """Generate reward reference PNG for the current Doors config."""
-    from scripts.generate_reward_reference import generate_reward_reference
+    from generate_reward_reference import generate_reward_reference
     generate_reward_reference(
         num_rooms=cfg.game.kwargs["num_rooms"],
         step_penalty=cfg.game.kwargs.get("step_penalty", 0.01),
