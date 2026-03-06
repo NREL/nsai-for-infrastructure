@@ -118,9 +118,9 @@ def _build_sections(cfg, seed_state=None):
         "rollout_mode": "Aggregation: mean or max",
         "rollout_blend": "Blend: (1-b)*rollout + b*nn_value",
         "rollout_budget": "Max total steps for rollouts per leaf",
-        "backup_rule": "Backup strategy: mean, max, topk, softmax",
-        "backup_topk": "Top-k values for topk backup",
-        "backup_tau": "Temperature for softmax backup",
+        "backup_rule": "Q-value backup: mean=avg all, max=best path, topk=avg top-k, softmax=smooth max",
+        "backup_topk": "k for topk backup (ignored unless backup_rule=topk)",
+        "backup_tau": "tau for softmax backup; tau->0 = max, tau->inf = mean (ignored unless softmax)",
     }
     mcts_choices = {
         "rollout_mode": ["mean", "max"],
@@ -348,6 +348,37 @@ def print_banner(cfg, exp_dir, mode="doors"):
     print(f"  EVALUATION")
     print(f"    Metric:             {metric}")
     print(f"    Optimal reward:     ~1.0 (all keys collected, goal reached)")
+    print()
+
+    # MCTS backup strategy explanation
+    backup_rule = cfg.agent.mcts_params.get("backup_rule", "mean")
+    rollout_n = cfg.agent.mcts_params.get("rollout_n", 0)
+    rollout_mode = cfg.agent.mcts_params.get("rollout_mode", "mean")
+    rollout_blend = cfg.agent.mcts_params.get("rollout_blend", 0.0)
+    print(f"  MCTS SEARCH STRATEGY")
+    print(f"    Rollouts:           {rollout_n} random completions per leaf "
+          f"(mode={rollout_mode}, blend={rollout_blend})")
+    print(f"    Backup rule:        {backup_rule}")
+    print()
+    print("    How backup rules work (controls how Q-values propagate up the tree):")
+    print("      During MCTS, each edge (state, action) accumulates reward values")
+    print("      from simulations that passed through it. The backup rule determines")
+    print("      how these values become the Q-value used in UCB action selection.")
+    print()
+    print("      mean    : Q = average of ALL values. Standard for two-player games.")
+    print("                Risk: rare good paths drowned out by many bad ones.")
+    print("      max     : Q = single best value seen. Optimistic: reflects 'a good")
+    print("                path exists'. Best for synthesis (find ONE good program).")
+    print("                Risk: a single lucky rollout can dominate early on.")
+    print("      topk    : Q = average of top-k values. Compromise between mean and")
+    print(f"                max. Currently k={cfg.agent.mcts_params.get('backup_topk', 3)}. "
+          "Degenerates to mean when k >= visit count.")
+    print("      softmax : Q = tau*log(mean(exp(v/tau))). Smooth approximation of max.")
+    print(f"                Currently tau={cfg.agent.mcts_params.get('backup_tau', 0.1)}. "
+          "tau->0 = max, tau->inf = mean.")
+    print()
+    print("    Note: Visit counts N(a) for UCB exploration are unchanged by backup rule.")
+    print("    Only the exploitation term (normalized Q) changes.")
     print()
     print(f"  Experiment dir: {exp_dir}/")
     print()
