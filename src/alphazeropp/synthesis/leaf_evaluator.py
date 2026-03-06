@@ -71,6 +71,12 @@ class LeafEvaluator:
         self._total_env_steps = 0
         self._total_interp_ops = 0
 
+        # Baseline stats for delta export (see snapshot_baseline)
+        self._base_eval_count = 0
+        self._base_cache_hits = 0
+        self._base_total_env_steps = 0
+        self._base_total_interp_ops = 0
+
     def __call__(self, program: Program) -> float:
         """Evaluate program, returning cached result if available.
 
@@ -112,23 +118,26 @@ class LeafEvaluator:
     def export_caches(self) -> dict:
         """Export cache data for cross-process aggregation.
 
-        Used by multiprocessing workers to return program evaluation
-        results back to the main process.
+        Returns delta stats (work done since baseline) rather than
+        cumulative totals, so that merge_caches() on the main process
+        accumulates correctly without double-counting inherited stats.
         """
         return {
             "_cache": dict(self._cache),
             "_full_cache": dict(self._full_cache),
             "_program_cache": dict(self._program_cache),
-            "_eval_count": self._eval_count,
-            "_total_env_steps": self._total_env_steps,
-            "_total_interp_ops": self._total_interp_ops,
+            "_eval_count": self._eval_count - self._base_eval_count,
+            "_cache_hits": self._cache_hits - self._base_cache_hits,
+            "_total_env_steps": self._total_env_steps - self._base_total_env_steps,
+            "_total_interp_ops": self._total_interp_ops - self._base_total_interp_ops,
         }
 
     def merge_caches(self, other: dict):
         """Merge exported caches from a worker LeafEvaluator.
 
         Only adds programs not already in this evaluator's cache.
-        Stats are accumulated additively.
+        Stats are accumulated additively (expects delta values from
+        export_caches, not cumulative totals).
         """
         for key, value in other["_cache"].items():
             if key not in self._cache:
@@ -136,8 +145,45 @@ class LeafEvaluator:
                 self._full_cache[key] = other["_full_cache"][key]
                 self._program_cache[key] = other["_program_cache"][key]
         self._eval_count += other.get("_eval_count", 0)
+        self._cache_hits += other.get("_cache_hits", 0)
         self._total_env_steps += other.get("_total_env_steps", 0)
         self._total_interp_ops += other.get("_total_interp_ops", 0)
+
+    def snapshot_baseline(self):
+        """Snapshot current stats as baseline for delta exports.
+
+        Call before pickling into worker processes so that
+        export_caches() returns only work done by the worker.
+        Needed for sequential mode (n_procs < 0) where __getstate__
+        is not invoked.
+        """
+        self._base_eval_count = self._eval_count
+        self._base_cache_hits = self._cache_hits
+        self._base_total_env_steps = self._total_env_steps
+        self._base_total_interp_ops = self._total_interp_ops
+
+    def __getstate__(self):
+        """Pickle hook: workers start with empty caches and zeroed stats.
+
+        This fixes two problems:
+        1. Stats inflation: workers no longer inherit accumulated stats
+           that get double-counted when merge_caches() adds them back.
+        2. Pickle overhead: avoids serializing O(cache_size) entries
+           per task (cache can grow to 1M+ programs).
+        """
+        state = self.__dict__.copy()
+        state['_cache'] = {}
+        state['_full_cache'] = {}
+        state['_program_cache'] = {}
+        state['_eval_count'] = 0
+        state['_cache_hits'] = 0
+        state['_total_env_steps'] = 0
+        state['_total_interp_ops'] = 0
+        state['_base_eval_count'] = 0
+        state['_base_cache_hits'] = 0
+        state['_base_total_env_steps'] = 0
+        state['_base_total_interp_ops'] = 0
+        return state
 
     def _evaluate(self, program: Program) -> dict:
         """Run the program on all frozen states and collect raw metrics."""
