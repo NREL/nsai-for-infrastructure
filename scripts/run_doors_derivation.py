@@ -505,6 +505,18 @@ def _compute_optimal_reward(cfg):
     return 1.0 + (num_rooms - 1) * unlock_bonus - optimal_steps * step_penalty
 
 
+def _generate_reward_reference(cfg, exp_dir):
+    """Generate reward reference PNG for the current Doors config."""
+    from scripts.generate_reward_reference import generate_reward_reference
+    generate_reward_reference(
+        num_rooms=cfg.game.kwargs["num_rooms"],
+        step_penalty=cfg.game.kwargs.get("step_penalty", 0.01),
+        unlock_bonus=cfg.game.kwargs.get("unlock_bonus", 0.1),
+        locs_per_room=cfg.game.kwargs.get("locs_per_room", 2),
+        save_dir=str(exp_dir),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Multi-seed aggregation
 # ---------------------------------------------------------------------------
@@ -849,6 +861,7 @@ def main():
     print_architecture(cfg, mode=mode)
 
     optimal_reward = _compute_optimal_reward(cfg)
+    _generate_reward_reference(cfg, exp_dir)
 
     if len(seeds) <= 1:
         # Single-seed run
