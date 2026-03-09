@@ -78,6 +78,10 @@ class Trainer:
         """
         logger.debug(f"Collecting {self.n_games_per_train} training games...")
         
+        # Snapshot leaf evaluator baseline so sequential-mode exports are deltas
+        leaf_eval = getattr(self.game, 'leaf_evaluator', None)
+        if leaf_eval is not None and hasattr(leaf_eval, 'snapshot_baseline'):
+            leaf_eval.snapshot_baseline()
         # Before we start multiprocessing, we need to push the multiprocessing state to all relevant objects (like the agent and the game) to make sure they are in a consistent state across processes. After multiprocessing is done, we need to pop the multiprocessing state to restore the original state.
         mp_manager = MultiprocessingManager(self.agent.net, self)
         mp_manager.push()

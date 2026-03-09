@@ -14,7 +14,8 @@ class DoorsDirectGame(EnvGame):
     """
 
     def __init__(self, env=None, num_rooms=2, locs_per_room=2,
-                 horizon=None, use_precondition_mask=False):
+                 horizon=None, use_precondition_mask=False,
+                 step_penalty=0.01, unlock_bonus=0.1):
         if env is None:
             if num_rooms < 2:
                 raise ValueError(f"num_rooms must be >= 2, got {num_rooms}")
@@ -29,17 +30,15 @@ class DoorsDirectGame(EnvGame):
                 loc_room=loc_room,
                 key_loc=key_loc,
                 horizon=horizon,
+                step_penalty=step_penalty,
+                unlock_bonus=unlock_bonus,
             )
         super().__init__(env)
         self._num_rooms = num_rooms
         self._locs_per_room = locs_per_room
         self._use_precondition_mask = use_precondition_mask
-        # Precompute structural mask: real actions valid, padding invalid
-        n_real = env.M + env.K + 1  # MOVE_TO + PICK + NOOP
-        n_total = env.action_space.n
-        self._structural_mask = np.array(
-            [True] * n_real + [False] * (n_total - n_real), dtype=bool
-        )
+        # Structural mask: all actions are real (no padding)
+        self._structural_mask = np.ones(env.action_space.n, dtype=bool)
 
     @property
     def hashable_obs(self):

@@ -28,6 +28,26 @@ from alphazeropp.training.trainer import Trainer
 from alphazeropp.training.evaluator import Evaluator
 
 
+class DoorsProgressFn:
+    """Picklable callable that counts fraction of keys picked from final state.
+
+    For Doors: keys are in obs[M + num_rooms : M + num_rooms + K].
+    A key is "picked" when its availability goes to 0.0.
+    Must be a class (not a closure) so multiprocessing can pickle it.
+    """
+
+    def __init__(self, doors_cfg: DoorsGameConfig):
+        self.K = doors_cfg.K
+        self.key_start = doors_cfg.M + doors_cfg.num_rooms
+
+    def __call__(self, final_state):
+        keys_picked = sum(
+            1 for k in range(self.K)
+            if final_state[self.key_start + k] == 0.0
+        )
+        return keys_picked / self.K if self.K > 0 else 1.0
+
+
 @dataclass
 class DoorsDerivationConfig(MetaConfig):
     """Configuration for DerivationGame on the DoorsPDDLLiteEnv.
@@ -91,8 +111,11 @@ class DoorsDerivationConfig(MetaConfig):
                 "dirichlet_epsilon": 0.40,
                 "rollout_n": 4,
                 "rollout_mode": "max",
-                "rollout_blend": 0.0,
+                "rollout_blend": 0.3,
                 "rollout_budget": 200,
+                "backup_rule": "max",
+                "backup_topk": 3,
+                "backup_tau": 0.1,
             },
             reward_discount=1.0,
             random_seeds={
@@ -105,12 +128,12 @@ class DoorsDerivationConfig(MetaConfig):
         self.trainer = TrainerConfig(
             n_games_per_train=30,
             n_past_iterations_to_train=20,
-            n_procs=4,
+            n_procs=8,
             checkpoint_dir="checkpoints",
         )
         self.evaluator = EvaluatorConfig(
             n_games=20,
-            n_procs=4,
+            n_procs=8,
         )
         self.run = RunConfig(
             n_iterations=30,
@@ -138,6 +161,7 @@ class DoorsDerivationConfig(MetaConfig):
             unlock_bonus=gk["unlock_bonus"],
         )
         frozen_states = [doors_initial_state(doors_cfg)]
+        progress_fn = DoorsProgressFn(doors_cfg)
         leaf_eval = LeafEvaluator(
             n_sites,
             frozen_states,
@@ -146,6 +170,8 @@ class DoorsDerivationConfig(MetaConfig):
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
             is_solved=doors_cfg.is_solved,
+            normalize_rewards=gk.get("normalize_rewards", False),
+            progress_fn=progress_fn,
         )
 
         # 2. DerivationGame
@@ -245,6 +271,7 @@ class DoorsFactoredDerivationConfig(DoorsDerivationConfig):
             unlock_bonus=gk["unlock_bonus"],
         )
         frozen_states = [doors_initial_state(doors_cfg)]
+        progress_fn = DoorsProgressFn(doors_cfg)
         leaf_eval = LeafEvaluator(
             n_sites,
             frozen_states,
@@ -253,6 +280,8 @@ class DoorsFactoredDerivationConfig(DoorsDerivationConfig):
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
             is_solved=doors_cfg.is_solved,
+            normalize_rewards=gk.get("normalize_rewards", False),
+            progress_fn=progress_fn,
         )
 
         # 2. FactoredDerivationGame
@@ -340,8 +369,11 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
                 "dirichlet_epsilon": 0.40,
                 "rollout_n": 4,
                 "rollout_mode": "max",
-                "rollout_blend": 0.0,
+                "rollout_blend": 0.3,
                 "rollout_budget": 200,
+                "backup_rule": "max",
+                "backup_topk": 3,
+                "backup_tau": 0.1,
             },
             reward_discount=1.0,
             random_seeds={
@@ -354,7 +386,7 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
         self.trainer = TrainerConfig(
             n_games_per_train=30,
             n_past_iterations_to_train=20,
-            n_procs=4,
+            n_procs=8,
             checkpoint_dir="checkpoints",
         )
         self.run = RunConfig(
@@ -379,6 +411,7 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
             unlock_bonus=gk["unlock_bonus"],
         )
         frozen_states = [doors_initial_state(doors_cfg)]
+        progress_fn = DoorsProgressFn(doors_cfg)
         leaf_eval = LeafEvaluator(
             n_sites,
             frozen_states,
@@ -387,6 +420,8 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
             is_solved=doors_cfg.is_solved,
+            normalize_rewards=gk.get("normalize_rewards", False),
+            progress_fn=progress_fn,
         )
 
         # 2. FactoredDerivationGame with macros + condition budget cap

@@ -34,6 +34,7 @@ class MCTSTreeNode():
         self.total_N = 0
         self.action_Q = {}
         self.action_N = {}
+        self.action_values = {}  # All backed-up values per action (for backup strategies)
 
 class MCTS():
     game: Game
@@ -53,7 +54,14 @@ class MCTS():
                  rollout_n: int = 0,
                  rollout_mode: str = "mean",
                  rollout_blend: float = 0.0,
-                 rollout_budget: int = 500):
+                 rollout_budget: int = 500,
+                 # -- Backup strategy --
+                 backup_rule: str = "mean",
+                 backup_topk: int = 3,
+                 backup_tau: float = 0.1):
+        assert backup_rule in ("mean", "max", "topk", "softmax"), \
+            f"Unknown backup_rule: {backup_rule}"
+
         self.game = game
         self.net = net
         self.nodes = {}
@@ -70,6 +78,11 @@ class MCTS():
         self.rollout_blend = rollout_blend
         self.rollout_budget = rollout_budget
         self._search_rollout_budget = rollout_budget
+
+        # Backup strategy
+        self.backup_rule = backup_rule
+        self.backup_topk = backup_topk
+        self.backup_tau = backup_tau
 
         # min max Q value
         self.q_min = float('inf')
@@ -436,11 +449,30 @@ class MCTS():
     def update_edge(self, mynode: MCTSTreeNode, action: int, reward: float):
         if action not in mynode.action_N:
             assert action not in mynode.action_Q
-            mynode.action_N[action] = 0  # could use a collections.Counter for this
+            mynode.action_N[action] = 0
             mynode.action_Q[action] = 0.0
-        
-        mynode.action_Q[action] = (mynode.action_N[action] * mynode.action_Q[action] + reward) / (1 + mynode.action_N[action])
+            mynode.action_values[action] = []
+
+        mynode.action_values[action].append(reward)
         mynode.action_N[action] += 1
+
+        # Compute Q based on backup rule
+        values = mynode.action_values[action]
+        if self.backup_rule == "mean":
+            mynode.action_Q[action] = sum(values) / len(values)
+        elif self.backup_rule == "max":
+            mynode.action_Q[action] = max(values)
+        elif self.backup_rule == "topk":
+            k = self.backup_topk
+            top = sorted(values, reverse=True)[:k]
+            mynode.action_Q[action] = sum(top) / len(top)
+        elif self.backup_rule == "softmax":
+            tau = self.backup_tau
+            v = np.array(values)
+            v_shifted = (v - v.max()) / tau
+            mynode.action_Q[action] = float(
+                v.max() + tau * np.log(np.mean(np.exp(v_shifted)))
+            )
 
         # Update global min/max Q
         new_q = mynode.action_Q[action]

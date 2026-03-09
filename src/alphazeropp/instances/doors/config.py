@@ -21,16 +21,19 @@ from alphazeropp.core.config import (
 )
 
 def compute_dims(num_rooms, locs_per_room=2):
-    """Compute obs_size and horizon from difficulty parameters.
+    """Compute obs_size, action_count, and horizon from difficulty parameters.
 
-    obs_size = M + 2*D - 1  where M = num_rooms * locs_per_room.
-    horizon  = max(15, 5 * optimal_steps).
+    obs_size     = M + D + K  where M = num_rooms * locs_per_room, K = D - 1.
+    action_count = M + K + 1  (M moves + K picks + 1 noop).
+    horizon      = max(15, 5 * optimal_steps).
     """
     M = num_rooms * locs_per_room
-    obs_size = M + 2 * num_rooms - 1
+    K = num_rooms - 1
+    obs_size = M + num_rooms + K  # equivalently M + 2*D - 1
+    action_count = M + K + 1
     optimal_steps = 2 * (num_rooms - 1) + 1
     horizon = max(15, optimal_steps * 5)
-    return {"obs_size": obs_size, "horizon": horizon, "M": M}
+    return {"obs_size": obs_size, "action_count": action_count, "horizon": horizon, "M": M}
 
 
 @dataclass
@@ -44,19 +47,22 @@ class DoorsDirectConfig(MetaConfig):
         super().__init__()
         dims = compute_dims(num_rooms, locs_per_room)
         obs_size = dims["obs_size"]
+        action_count = dims["action_count"]
 
         self.game = GameConfig(
             game_cls=DoorsDirectGame,
             kwargs={
                 "num_rooms": num_rooms,
                 "locs_per_room": locs_per_room,
+                "step_penalty": 0.01,
+                "unlock_bonus": 0.1,
             },
         )
         self.net = NetConfig(
             net_cls=DoorsDirectNet,
             kwargs={
                 "input_size": obs_size,
-                "output_size": obs_size,
+                "output_size": action_count,
                 "n_hidden_layers": 1,
                 "hidden_size": max(64, obs_size * 4),
             },
@@ -80,12 +86,12 @@ class DoorsDirectConfig(MetaConfig):
         self.trainer = TrainerConfig(
             n_games_per_train=50,
             n_past_iterations_to_train=20,
-            n_procs=-1,
+            n_procs=8,
             checkpoint_dir="checkpoints",
         )
         self.evaluator = EvaluatorConfig(
             n_games=20,
-            n_procs=-1,
+            n_procs=8,
         )
         self.run = RunConfig(
             n_iterations=50,
