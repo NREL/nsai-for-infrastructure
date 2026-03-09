@@ -13,11 +13,10 @@ State vector (float32, size M + 2D - 1):
     unlocked[0..D-1]         room lock status
     key_available[0..D-2]    key availability
 
-Actions (Discrete, size obs_size for n_sites alignment):
+Actions (Discrete, size M + K + 1):
     [0..M-1]                 MOVE_TO(l)
-    [M..M+D-2]               PICK(k)
-    [M+D-1]                  NOOP
-    [M+D..obs_size-1]        invalid -> NOOP
+    [M..M+K-1]               PICK(k)
+    [M+K]                    NOOP
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ class ActionSpec:
     """Maps an action index to a semantic action."""
     index: int
     name: str
-    type: str   # "move", "pick", "noop", "invalid"
+    type: str   # "move", "pick", "noop"
     param: int  # location/key index, or -1
 
 
@@ -131,9 +130,9 @@ class DoorsPDDLLiteEnv(gym.Env):
         self._obs_size = self.M + 2 * self.D - 1
         self._action_count = self.M + self.K + 1  # M moves + K picks + 1 noop
 
-        # Gym spaces (action space padded to obs_size for n_sites alignment)
+        # Gym spaces
         self.observation_space = spaces.MultiBinary(self._obs_size)
-        self.action_space = spaces.Discrete(self._obs_size)
+        self.action_space = spaces.Discrete(self._action_count)
 
         # Frozen states
         self._frozen_states = list(frozen_states) if frozen_states else None
@@ -154,6 +153,52 @@ class DoorsPDDLLiteEnv(gym.Env):
     @property
     def n_sites(self) -> int:
         return self._obs_size
+
+    @property
+    def action_count(self) -> int:
+        return self._action_count
+
+    def encode_action(self, action_type: str, param: int = -1) -> int:
+        """Encode a semantic action to an integer index."""
+        if action_type == "move":
+            assert 0 <= param < self.M
+            return param
+        elif action_type == "pick":
+            assert 0 <= param < self.K
+            return self.M + param
+        elif action_type == "noop":
+            return self.M + self.K
+        raise ValueError(f"Unknown action type: {action_type}")
+
+    def decode_action(self, action: int) -> tuple[str, int]:
+        """Decode an integer action index to (action_type, param)."""
+        if 0 <= action < self.M:
+            return ("move", action)
+        elif self.M <= action < self.M + self.K:
+            return ("pick", action - self.M)
+        elif action == self.M + self.K:
+            return ("noop", -1)
+        raise ValueError(f"Invalid action: {action}")
+
+    def action_masks(self, mode: str = "precondition") -> np.ndarray:
+        """Return boolean mask over real semantic actions.
+
+        mode="none": all actions available (invalid semantics become noop in step)
+        mode="precondition": only currently legal actions
+        """
+        if mode == "none":
+            return np.ones(self._action_count, dtype=bool)
+        mask = np.zeros(self._action_count, dtype=bool)
+        for l in range(self.M):
+            room = self.loc_room[l]
+            mask[l] = self._state[self._unlocked_offset + room] == 1.0
+        for k in range(self.K):
+            mask[self.M + k] = (
+                self._state[self.key_loc[k]] == 1.0
+                and self._state[self._key_offset + k] == 1.0
+            )
+        mask[self.M + self.K] = True  # NOOP always valid
+        return mask
 
     @property
     def state(self) -> np.ndarray:
@@ -257,8 +302,6 @@ class DoorsPDDLLiteEnv(gym.Env):
             idx = self.M + k
             specs.append(ActionSpec(idx, f"PICK({k})", "pick", k))
         specs.append(ActionSpec(self.M + self.K, "NOOP", "noop", -1))
-        for i in range(self.M + self.K + 1, self._obs_size):
-            specs.append(ActionSpec(i, f"INVALID({i})", "invalid", -1))
         return specs
 
     # -- Preset layouts --

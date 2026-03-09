@@ -41,7 +41,7 @@ def _build_sections(cfg, seed_state=None):
         lpr = cfg.game.kwargs.get("locs_per_room", 2)
         dims = compute_dims(nr, lpr)
         cfg.net.kwargs["input_size"] = dims["obs_size"]
-        cfg.net.kwargs["output_size"] = dims["obs_size"]
+        cfg.net.kwargs["output_size"] = dims["action_count"]
         cfg.net.kwargs["hidden_size"] = max(64, dims["obs_size"] * 4)
 
     def _set_num_rooms(val):
@@ -312,14 +312,11 @@ def print_banner(cfg, game, exp_dir):
     print()
 
     # Dimensions summary
-    n_real = env.M + env.K + 1
-    n_pad = dims["obs_size"] - n_real
     print(f"  DIMENSIONS")
     print(f"    Obs size:     {dims['obs_size']}"
           f"  ({env.M} locs + {env.D} rooms + {env.K} keys)")
-    print(f"    Action space: {dims['obs_size']}"
-          f"  ({env.M} MOVE_TO + {env.K} PICK + 1 NOOP"
-          f" + {n_pad} invalid)")
+    print(f"    Action space: {dims['action_count']}"
+          f"  ({env.M} MOVE_TO + {env.K} PICK + 1 NOOP)")
     print(f"    Horizon:      {env.horizon}")
     print()
 
@@ -330,8 +327,6 @@ def print_banner(cfg, game, exp_dir):
     print("    PICK(k)     Pick up key k. Requires agent at key_loc[k] and key k")
     print("                available. Unlocks the target room immediately.")
     print("    NOOP        Do nothing. Always valid.")
-    print("    <invalid>   Padding actions to make action_space = obs_size.")
-    print("                Always masked out; never executed.")
     print()
 
     # Training hyperparameters
@@ -360,10 +355,10 @@ def print_banner(cfg, game, exp_dir):
         print("    This prunes the search tree but gives the agent domain knowledge.")
     else:
         print("    Mode: STRUCTURAL (default)")
-        print("    All real actions (MOVE_TO, PICK, NOOP) are always valid;")
-        print("    only padding actions are masked out. Invalid moves (e.g.,")
-        print("    MOVE_TO a locked room) are silently ignored by the env (no-op).")
-        print("    The agent must learn preconditions from experience alone.")
+        print("    All semantic actions (MOVE_TO, PICK, NOOP) are always valid.")
+        print("    Invalid moves (e.g., MOVE_TO a locked room) are silently")
+        print("    ignored by the env (no-op). The agent must learn preconditions")
+        print("    from experience alone.")
     print()
 
     # Output legend

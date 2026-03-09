@@ -30,15 +30,13 @@ class TestDoorsDirectGame:
         assert game.step_count == 1
 
     def test_action_mask_structural(self):
-        """Default mask: actions 0-5 valid, action 6 invalid."""
+        """Default mask: all 6 actions valid (no padding)."""
         game = DoorsDirectGame()
         game.reset_wrapper()
         mask = game.get_action_mask()
-        assert mask.shape == (7,)
-        # Actions 0-5 are real (MOVE_TO x4, PICK x1, NOOP x1)
-        assert mask[:6].all()
-        # Action 6 is padding/invalid
-        assert not mask[6]
+        assert mask.shape == (6,)
+        # All actions are real (MOVE_TO x4, PICK x1, NOOP x1)
+        assert mask.all()
 
     def test_action_mask_precondition_initial(self):
         """Precondition mask at initial state."""
@@ -58,8 +56,6 @@ class TestDoorsDirectGame:
         assert mask[4] is np.False_
         # NOOP: always True
         assert mask[5] is np.True_
-        # Invalid: always False
-        assert mask[6] is np.False_
 
     def test_action_mask_precondition_at_key(self):
         """Precondition mask when at key location."""
@@ -123,22 +119,22 @@ class TestDoorsDirectNet:
     """Tests for DoorsDirectNet."""
 
     def test_predict_shape(self):
-        """predict returns (policy (7,), value ())."""
-        net = DoorsDirectNet(device="cpu")
+        """predict returns (policy (6,), value ()) for D=2 (6 real actions)."""
+        net = DoorsDirectNet(input_size=7, output_size=6, device="cpu")
         obs = np.zeros(7, dtype=np.float32)
         policy, value = net.predict(obs)
-        assert policy.shape == (7,)
+        assert policy.shape == (6,)
         assert value.shape == ()
         # Policy should sum to ~1.0 (softmax)
         assert policy.sum() == pytest.approx(1.0, abs=1e-5)
 
     def test_train_loss_decreases(self):
         """Training on a tiny dataset decreases loss."""
-        net = DoorsDirectNet(random_seed=42, device="cpu")
+        net = DoorsDirectNet(input_size=7, output_size=6, random_seed=42, device="cpu")
         # Create a trivial dataset: all zeros -> uniform policy, value=0.5
         n = 50
         states = [np.zeros(7, dtype=np.float32) for _ in range(n)]
-        policies = [np.ones(7, dtype=np.float32) / 7 for _ in range(n)]
+        policies = [np.ones(6, dtype=np.float32) / 6 for _ in range(n)]
         values = [0.5 for _ in range(n)]
         examples = list(zip(states, policies, values))
 

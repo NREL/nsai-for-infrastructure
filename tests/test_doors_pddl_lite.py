@@ -127,12 +127,12 @@ class TestDoorsPDDLLiteEnvBasics:
         # State bits should be the same
         np.testing.assert_array_equal(obs0, obs1)
 
-    def test_invalid_action_noop(self):
-        """Out-of-range action is noop."""
+    def test_noop_action(self):
+        """NOOP action (M+K) doesn't change state."""
         env = DoorsPDDLLiteEnv.make_d2()
         obs0, _ = env.reset()
-        # obs_size=7, valid actions are 0..5 (M+K=5), noop=5, invalid=6
-        obs1, _, _, _, _ = env.step(6)
+        noop = env.M + env.K  # action index 5
+        obs1, _, _, _, _ = env.step(noop)
         np.testing.assert_array_equal(obs0, obs1)
 
 
@@ -342,3 +342,69 @@ class TestRewardStructure:
         _, reward, terminated, _, _ = env.step(3)  # move to goal
         assert terminated
         assert abs(reward - 1.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Action space depadding
+# ---------------------------------------------------------------------------
+
+class TestActionSpaceDepadding:
+    """Tests verifying action_space matches real action count (no padding)."""
+
+    def test_action_space_equals_real_count(self):
+        """action_space.n == M + K + 1 (no padding)."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        assert env.action_space.n == env.M + env.K + 1  # 6, not 7
+
+    def test_action_space_d3(self):
+        """D=3: action_space.n == 6 + 2 + 1 = 9 (obs_size=11)."""
+        env = DoorsPDDLLiteEnv.make_d3()
+        assert env.action_space.n == 9
+        assert env.observation_space.n == 11
+
+    def test_encode_decode_roundtrip(self):
+        """encode/decode are inverses for all valid actions."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        for a in range(env.action_space.n):
+            atype, param = env.decode_action(a)
+            assert env.encode_action(atype, param) == a
+
+    def test_encode_decode_semantics(self):
+        """encode/decode produce correct types."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        assert env.decode_action(0) == ("move", 0)
+        assert env.decode_action(3) == ("move", 3)
+        assert env.decode_action(4) == ("pick", 0)
+        assert env.decode_action(5) == ("noop", -1)
+        assert env.encode_action("move", 2) == 2
+        assert env.encode_action("pick", 0) == 4
+        assert env.encode_action("noop") == 5
+
+    def test_no_invalid_in_action_spec(self):
+        """action_spec contains no INVALID entries."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        for spec in env.action_spec:
+            assert spec.type != "invalid"
+        assert len(env.action_spec) == env.action_space.n
+
+    def test_action_masks_precondition(self):
+        """action_masks('precondition') matches expected initial mask."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        env.reset()
+        mask = env.action_masks("precondition")
+        assert mask.shape == (6,)
+        assert mask[env.M + env.K]  # NOOP always valid
+        # Room 0 unlocked -> moves to room 0 locs valid
+        assert mask[0] and mask[1]
+        # Room 1 locked -> moves to room 1 locs invalid
+        assert not mask[2] and not mask[3]
+        # Not at key location -> PICK invalid
+        assert not mask[4]
+
+    def test_action_masks_none(self):
+        """action_masks('none') returns all-True."""
+        env = DoorsPDDLLiteEnv.make_d2()
+        env.reset()
+        mask = env.action_masks("none")
+        assert mask.shape == (6,)
+        assert mask.all()

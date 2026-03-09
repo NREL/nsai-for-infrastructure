@@ -37,12 +37,8 @@ class DoorsDirectGame(EnvGame):
         self._num_rooms = num_rooms
         self._locs_per_room = locs_per_room
         self._use_precondition_mask = use_precondition_mask
-        # Precompute structural mask: real actions valid, padding invalid
-        n_real = env.M + env.K + 1  # MOVE_TO + PICK + NOOP
-        n_total = env.action_space.n
-        self._structural_mask = np.array(
-            [True] * n_real + [False] * (n_total - n_real), dtype=bool
-        )
+        # Structural mask: all actions are real (no padding)
+        self._structural_mask = np.ones(env.action_space.n, dtype=bool)
 
     @property
     def hashable_obs(self):
