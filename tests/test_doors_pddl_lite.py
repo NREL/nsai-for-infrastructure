@@ -360,7 +360,7 @@ class TestActionSpaceDepadding:
         """D=3: action_space.n == 6 + 2 + 1 = 9 (obs_size=11)."""
         env = DoorsPDDLLiteEnv.make_d3()
         assert env.action_space.n == 9
-        assert env.observation_space.n == 11
+        assert env.observation_space.shape == (11,)
 
     def test_encode_decode_roundtrip(self):
         """encode/decode are inverses for all valid actions."""

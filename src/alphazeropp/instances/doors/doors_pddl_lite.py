@@ -131,7 +131,9 @@ class DoorsPDDLLiteEnv(gym.Env):
         self._action_count = self.M + self.K + 1  # M moves + K picks + 1 noop
 
         # Gym spaces
-        self.observation_space = spaces.MultiBinary(self._obs_size)
+        self.observation_space = spaces.Box(
+            low=0, high=1, shape=(self._obs_size,), dtype=np.float32
+        )
         self.action_space = spaces.Discrete(self._action_count)
 
         # Frozen states

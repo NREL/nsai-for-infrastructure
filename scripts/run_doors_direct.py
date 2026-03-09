@@ -22,6 +22,9 @@ from pathlib import Path
 import numpy as np
 
 from alphazeropp.instances.doors.config import DoorsDirectConfig, compute_dims
+from alphazeropp.instances.doors.eval_ablations import (
+    ABLATION_MODES, compute_solve_rate_ablated,
+)
 from alphazeropp.training.gated_trainer import GatedTrainer
 from alphazeropp.utils.interactive_config import (
     build_param_list, interactive_edit, attr_setter, dict_setter,
@@ -147,7 +150,7 @@ def _build_sections(cfg, seed_state=None):
 # Experiment directory
 # ---------------------------------------------------------------------------
 
-def setup_experiment_dir(cfg):
+def setup_experiment_dir(cfg, eval_ablation=None):
     """Create and return an experiment directory. Updates cfg paths."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     num_rooms = cfg.game.kwargs.get("num_rooms", 2)
@@ -158,6 +161,8 @@ def setup_experiment_dir(cfg):
     mask = "mask" if cfg.game.kwargs.get("use_precondition_mask", False) else "nomask"
     dirname = (f"{timestamp}_D{num_rooms}_L{locs_per_room}_{mask}"
                f"_mcts{sim}_games{games}_iter{iters}")
+    if eval_ablation and eval_ablation != "full":
+        dirname += f"_abl-{eval_ablation}"
 
     exp_dir = Path("experiments") / "doors_direct" / dirname
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -1084,7 +1089,7 @@ def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None,
 # Single-seed training run
 # ---------------------------------------------------------------------------
 
-def _run_single_seed(cfg, exp_dir):
+def _run_single_seed(cfg, exp_dir, eval_ablation=None):
     """Run a single-seed training loop. Returns iteration_log."""
     num_rooms = cfg.game.kwargs.get("num_rooms", 2)
     game, net, agent, trainer, evaluator = cfg.build()
@@ -1123,6 +1128,14 @@ def _run_single_seed(cfg, exp_dir):
             best_solve_rate = solve_rate
             best_solve_iter = i + 1
 
+        # Ablation evaluation (if requested)
+        abl_solve_rate = None
+        abl_avg_reward = None
+        if eval_ablation and eval_ablation != "full":
+            gamma = getattr(cfg.agent, 'reward_discount', 1.0)
+            abl_solve_rate, abl_avg_reward = compute_solve_rate_ablated(
+                agent, eval_ablation, n_episodes=20, gamma=gamma)
+
         train_records = trainer.statistics_manager.to_list()
         avg_train_reward = 0.0
         if train_records:
@@ -1138,6 +1151,10 @@ def _run_single_seed(cfg, exp_dir):
             "best_solve_rate": best_solve_rate,
             "wall_clock_s": round(elapsed, 1),
         }
+        if abl_solve_rate is not None:
+            entry["abl_solve_rate"] = abl_solve_rate
+            entry["abl_avg_reward"] = abl_avg_reward
+            entry["eval_ablation"] = eval_ablation
         iteration_log.append(entry)
 
         print_iteration_summary(
@@ -1204,6 +1221,47 @@ def _run_single_seed(cfg, exp_dir):
     render_policy_gif(trace, final_obs, game.env, gif_path, fps=2)
     print(sep)
 
+    # Write eval_summary.csv and eval_manifest.json if ablation is active
+    if eval_ablation:
+        import csv
+        csv_path = exp_dir / "eval_summary.csv"
+        fieldnames = ["iteration", "seed", "eval_ablation",
+                       "solve_rate", "avg_reward",
+                       "abl_solve_rate", "abl_avg_reward", "wall_clock_s"]
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames,
+                                     extrasaction="ignore")
+            writer.writeheader()
+            seed_val = cfg.agent.random_seeds.get("mcts", 0)
+            for e in iteration_log:
+                row = {
+                    "iteration": e["iteration"],
+                    "seed": seed_val,
+                    "eval_ablation": eval_ablation,
+                    "solve_rate": e["solve_rate"],
+                    "avg_reward": e["avg_eval_reward"],
+                    "abl_solve_rate": e.get("abl_solve_rate", ""),
+                    "abl_avg_reward": e.get("abl_avg_reward", ""),
+                    "wall_clock_s": e["wall_clock_s"],
+                }
+                writer.writerow(row)
+
+        import subprocess
+        git_hash = ""
+        try:
+            git_hash = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            pass
+        manifest = {
+            "eval_ablation": eval_ablation,
+            "git_hash": git_hash,
+            "config": cfg._to_serializable_dict() if hasattr(cfg, "_to_serializable_dict") else str(cfg),
+        }
+        with open(exp_dir / "eval_manifest.json", "w") as f:
+            json.dump(manifest, f, indent=2, default=str)
+
     return iteration_log
 
 
@@ -1219,6 +1277,9 @@ def parse_args():
                         help="Random seeds for multi-seed runs")
     parser.add_argument("--non-interactive", action="store_true",
                         help="Skip interactive config editing")
+    parser.add_argument("--eval-ablation", type=str, default=None,
+                        choices=ABLATION_MODES,
+                        help="Eval-only ablation mode (training unchanged)")
     return parser.parse_args()
 
 
@@ -1249,7 +1310,8 @@ def main():
         seeds = _parse_seeds(seed_state["seeds_str"])
 
     # Setup experiment directory
-    exp_dir = setup_experiment_dir(cfg)
+    eval_ablation = args.eval_ablation
+    exp_dir = setup_experiment_dir(cfg, eval_ablation=eval_ablation)
 
     # Build a temporary game for banner display (needs env for layout info)
     from alphazeropp.instances.doors.game import DoorsDirectGame
@@ -1275,7 +1337,7 @@ def main():
                 "mcts": s, "train": s + 1,
                 "eval": s + 2, "external_policy": s + 3,
             }
-        _run_single_seed(cfg, exp_dir)
+        _run_single_seed(cfg, exp_dir, eval_ablation=eval_ablation)
     else:
         # Multi-seed run
         seed_dirs = {}
@@ -1293,7 +1355,7 @@ def main():
             cfg.trainer.checkpoint_dir = str(seed_dir / "checkpoints")
             cfg.run.plot_path = str(seed_dir / "training_metrics.png")
             seed_dirs[seed] = seed_dir
-            _run_single_seed(cfg, seed_dir)
+            _run_single_seed(cfg, seed_dir, eval_ablation=eval_ablation)
 
         # Aggregate across seeds
         logs = _load_iteration_logs(seed_dirs)
