@@ -1,5 +1,5 @@
 """
-AST nodes for the BitString decision-list DSL.
+AST nodes for the decision-list DSL.
 
 Node types:
   Actions:    Flip(index)
@@ -32,7 +32,7 @@ Program = Union["Ite", "Default"]
 
 @dataclass(frozen=True)
 class Flip:
-    """Action: flip bit at position *index*. Returns action index *index*."""
+    """Action: select action at *index*."""
     index: int
 
     def node_count(self) -> int:

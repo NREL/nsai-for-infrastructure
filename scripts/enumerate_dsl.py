@@ -234,7 +234,7 @@ def evaluate_program(prog: Program, n_sites: int, cfg: GameConfig) -> dict:
     for x0 in inits:
         env = cfg.make_env(n_sites, frozen_states=[x0])
         env.reset()
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=lambda obs: bool(np.all(obs == 1.0)))
         if result.solved:
             solved_count += 1
         total_steps += result.total_env_steps
@@ -503,7 +503,7 @@ def _run_episode_with_x0(
     """Run a single episode with a specific initial state."""
     env = cfg.make_env(n_sites, frozen_states=[x0])
     env.reset()
-    return run_policy_episode(env, prog)
+    return run_policy_episode(env, prog, is_solved=lambda obs: bool(np.all(obs == 1.0)))
 
 
 def _draw_evolution_subplot(
@@ -903,7 +903,7 @@ def main():
         x0 = all_initial_states(N, cfg.n_ones)[0]
         env = cfg.make_env(N, frozen_states=[x0])
         env.reset()
-        episode = run_policy_episode(env, best_prog)
+        episode = run_policy_episode(env, best_prog, is_solved=lambda obs: bool(np.all(obs == 1.0)))
         print(format_trace(episode, program=best_prog))
 
 

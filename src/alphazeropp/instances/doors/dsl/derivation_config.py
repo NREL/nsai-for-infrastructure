@@ -142,62 +142,63 @@ class DoorsDerivationConfig(MetaConfig):
             plot_path="doors_training_metrics.png",
         )
 
-    def build(self):
-        """Build DerivationGame for doors, network, agent, trainer, evaluator.
+    # ----- shared build helpers (used by subclass overrides) -----
 
-        Creates DoorsGameConfig -> canonical initial state -> LeafEvaluator
-        (with is_solved callback) -> DerivationGame (with allow_and/not).
-        """
-        gk = dict(self.game.kwargs)
-        budget = gk["budget"]
-        n_sites = gk["n_sites"]
-
-        # 1. DoorsGameConfig -> frozen state -> LeafEvaluator
-        doors_cfg = DoorsGameConfig(
+    def _make_doors_cfg(self) -> DoorsGameConfig:
+        """Create DoorsGameConfig from self.game.kwargs."""
+        gk = self.game.kwargs
+        return DoorsGameConfig(
             num_rooms=gk["num_rooms"],
             locs_per_room=gk.get("locs_per_room", 2),
             horizon=gk["horizon"],
             step_penalty=gk["step_penalty"],
             unlock_bonus=gk["unlock_bonus"],
         )
-        frozen_states = [doors_initial_state(doors_cfg)]
-        progress_fn = DoorsProgressFn(doors_cfg)
-        leaf_eval = LeafEvaluator(
+
+    def _make_leaf_evaluator(self, doors_cfg: DoorsGameConfig,
+                             n_sites: int) -> LeafEvaluator:
+        """Create LeafEvaluator with progress callback and is_solved."""
+        gk = self.game.kwargs
+        return LeafEvaluator(
             n_sites,
-            frozen_states,
+            [doors_initial_state(doors_cfg)],
             doors_cfg,
             metric=gk["metric"],
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
             is_solved=doors_cfg.is_solved,
             normalize_rewards=gk.get("normalize_rewards", False),
-            progress_fn=progress_fn,
+            progress_fn=DoorsProgressFn(doors_cfg),
         )
 
-        # 2. DerivationGame
-        mode = gk.get("program_budget_mode", "max")
-        allow_and = gk.get("allow_and", True)
-        allow_not = gk.get("allow_not", True)
-        n_actions = doors_cfg.M + doors_cfg.K + 1
-        one_hot_groups = [list(range(doors_cfg.M))]
-        game = DerivationGame(
-            budget, n_sites, leaf_eval,
-            program_budget_mode=mode,
-            allow_and=allow_and,
-            allow_not=allow_not,
-            n_actions=n_actions,
-            one_hot_groups=one_hot_groups,
+    def _make_game(self, game_cls, leaf_eval: LeafEvaluator,
+                   doors_cfg: DoorsGameConfig, **extra_kwargs):
+        """Create a DerivationGame or FactoredDerivationGame."""
+        gk = self.game.kwargs
+        return game_cls(
+            gk["budget"], gk["n_sites"], leaf_eval,
+            program_budget_mode=gk.get("program_budget_mode", "max"),
+            allow_and=gk.get("allow_and", True),
+            allow_not=gk.get("allow_not", True),
+            n_actions=doors_cfg.M + doors_cfg.K + 1,
+            one_hot_groups=[list(range(doors_cfg.M))],
+            **extra_kwargs,
         )
 
-        # 3. Network (action_size derived from game)
-        action_size = game.action_space.n
-        net_kwargs = dict(self.net.kwargs)
-        net_kwargs["budget"] = budget
-        net_kwargs["n_sites"] = n_sites
-        net_kwargs["action_size"] = action_size
-        net = DerivationPolicyValueNet(**net_kwargs)
+    def _make_net(self, game, extra_features: int = 0):
+        """Create DerivationPolicyValueNet with action_size from game."""
+        nk = dict(self.net.kwargs)
+        nk.update(
+            budget=self.game.kwargs["budget"],
+            n_sites=self.game.kwargs["n_sites"],
+            action_size=game.action_space.n,
+        )
+        if extra_features:
+            nk["extra_features"] = extra_features
+        return DerivationPolicyValueNet(**nk)
 
-        # 4. Agent, Trainer, Evaluator
+    def _make_training_stack(self, game, net):
+        """Create Agent, Trainer, and Evaluator from shared config."""
         agent = Agent(
             game=game,
             net=net,
@@ -220,6 +221,18 @@ class DoorsDerivationConfig(MetaConfig):
             n_games=self.evaluator.n_games,
             n_procs=self.evaluator.n_procs,
         )
+        return agent, trainer, evaluator
+
+    # ----- build -----
+
+    def build(self):
+        """Build DerivationGame for doors, network, agent, trainer, evaluator."""
+        doors_cfg = self._make_doors_cfg()
+        n_sites = self.game.kwargs["n_sites"]
+        leaf_eval = self._make_leaf_evaluator(doors_cfg, n_sites)
+        game = self._make_game(DerivationGame, leaf_eval, doors_cfg)
+        net = self._make_net(game)
+        agent, trainer, evaluator = self._make_training_stack(game, net)
         return game, net, agent, trainer, evaluator
 
 
@@ -258,79 +271,12 @@ class DoorsFactoredDerivationConfig(DoorsDerivationConfig):
 
     def build(self):
         """Build FactoredDerivationGame for doors."""
-        gk = dict(self.game.kwargs)
-        budget = gk["budget"]
-        n_sites = gk["n_sites"]
-
-        # 1. DoorsGameConfig -> frozen state -> LeafEvaluator
-        doors_cfg = DoorsGameConfig(
-            num_rooms=gk["num_rooms"],
-            locs_per_room=gk.get("locs_per_room", 2),
-            horizon=gk["horizon"],
-            step_penalty=gk["step_penalty"],
-            unlock_bonus=gk["unlock_bonus"],
-        )
-        frozen_states = [doors_initial_state(doors_cfg)]
-        progress_fn = DoorsProgressFn(doors_cfg)
-        leaf_eval = LeafEvaluator(
-            n_sites,
-            frozen_states,
-            doors_cfg,
-            metric=gk["metric"],
-            penalty_lambda=gk["penalty_lambda"],
-            blend_alpha=gk["blend_alpha"],
-            is_solved=doors_cfg.is_solved,
-            normalize_rewards=gk.get("normalize_rewards", False),
-            progress_fn=progress_fn,
-        )
-
-        # 2. FactoredDerivationGame
-        mode = gk.get("program_budget_mode", "max")
-        allow_and = gk.get("allow_and", True)
-        allow_not = gk.get("allow_not", True)
-        n_actions = doors_cfg.M + doors_cfg.K + 1
-        one_hot_groups = [list(range(doors_cfg.M))]
-        game = FactoredDerivationGame(
-            budget, n_sites, leaf_eval,
-            program_budget_mode=mode,
-            allow_and=allow_and,
-            allow_not=allow_not,
-            n_actions=n_actions,
-            one_hot_groups=one_hot_groups,
-        )
-
-        # 3. Network (action_size from factored game)
-        action_size = game.action_space.n
-        net_kwargs = dict(self.net.kwargs)
-        net_kwargs["budget"] = budget
-        net_kwargs["n_sites"] = n_sites
-        net_kwargs["action_size"] = action_size
-        net_kwargs["extra_features"] = 2  # phase_id + pending_structure_id
-        net = DerivationPolicyValueNet(**net_kwargs)
-
-        # 4. Agent, Trainer, Evaluator
-        agent = Agent(
-            game=game,
-            net=net,
-            mcts_params=self.agent.mcts_params,
-            reward_discount=self.agent.reward_discount,
-            external_policy=self.agent.external_policy,
-            random_seeds=self.agent.random_seeds,
-        )
-        trainer = Trainer(
-            agent=agent,
-            net=net,
-            game=game,
-            n_games_per_train=self.trainer.n_games_per_train,
-            n_past_iterations_to_train=self.trainer.n_past_iterations_to_train,
-            n_procs=self.trainer.n_procs,
-            checkpoint_dir=self.trainer.checkpoint_dir,
-            use_tree_reuse=True,
-        )
-        evaluator = Evaluator(
-            n_games=self.evaluator.n_games,
-            n_procs=self.evaluator.n_procs,
-        )
+        doors_cfg = self._make_doors_cfg()
+        n_sites = self.game.kwargs["n_sites"]
+        leaf_eval = self._make_leaf_evaluator(doors_cfg, n_sites)
+        game = self._make_game(FactoredDerivationGame, leaf_eval, doors_cfg)
+        net = self._make_net(game, extra_features=2)
+        agent, trainer, evaluator = self._make_training_stack(game, net)
         return game, net, agent, trainer, evaluator
 
 
@@ -398,82 +344,14 @@ class DoorsFactoredD10MacroConfig(DoorsDerivationConfig):
 
     def build(self):
         """Build FactoredDerivationGame with macros for D=10 doors."""
-        gk = dict(self.game.kwargs)
-        budget = gk["budget"]
-        n_sites = gk["n_sites"]
-
-        # 1. DoorsGameConfig -> frozen state -> LeafEvaluator
-        doors_cfg = DoorsGameConfig(
-            num_rooms=gk["num_rooms"],
-            locs_per_room=gk.get("locs_per_room", 2),
-            horizon=gk["horizon"],
-            step_penalty=gk["step_penalty"],
-            unlock_bonus=gk["unlock_bonus"],
+        doors_cfg = self._make_doors_cfg()
+        n_sites = self.game.kwargs["n_sites"]
+        leaf_eval = self._make_leaf_evaluator(doors_cfg, n_sites)
+        game = self._make_game(
+            FactoredDerivationGame, leaf_eval, doors_cfg,
+            macro_productions_fn=make_macro_fn(doors_cfg),
+            max_condition_budget=12,
         )
-        frozen_states = [doors_initial_state(doors_cfg)]
-        progress_fn = DoorsProgressFn(doors_cfg)
-        leaf_eval = LeafEvaluator(
-            n_sites,
-            frozen_states,
-            doors_cfg,
-            metric=gk["metric"],
-            penalty_lambda=gk["penalty_lambda"],
-            blend_alpha=gk["blend_alpha"],
-            is_solved=doors_cfg.is_solved,
-            normalize_rewards=gk.get("normalize_rewards", False),
-            progress_fn=progress_fn,
-        )
-
-        # 2. FactoredDerivationGame with macros + condition budget cap
-        mode = gk.get("program_budget_mode", "max")
-        allow_and = gk.get("allow_and", True)
-        allow_not = gk.get("allow_not", True)
-        n_actions = doors_cfg.M + doors_cfg.K + 1
-        one_hot_groups = [list(range(doors_cfg.M))]
-        macro_fn = make_macro_fn(doors_cfg)
-        max_condition_budget = 12
-
-        game = FactoredDerivationGame(
-            budget, n_sites, leaf_eval,
-            program_budget_mode=mode,
-            allow_and=allow_and,
-            allow_not=allow_not,
-            n_actions=n_actions,
-            one_hot_groups=one_hot_groups,
-            macro_productions_fn=macro_fn,
-            max_condition_budget=max_condition_budget,
-        )
-
-        # 3. Network (action_size from factored game)
-        action_size = game.action_space.n
-        net_kwargs = dict(self.net.kwargs)
-        net_kwargs["budget"] = budget
-        net_kwargs["n_sites"] = n_sites
-        net_kwargs["action_size"] = action_size
-        net_kwargs["extra_features"] = 2  # phase_id + pending_structure_id
-        net = DerivationPolicyValueNet(**net_kwargs)
-
-        # 4. Agent, Trainer, Evaluator (tree reuse for D=10 efficiency)
-        agent = Agent(
-            game=game,
-            net=net,
-            mcts_params=self.agent.mcts_params,
-            reward_discount=self.agent.reward_discount,
-            external_policy=self.agent.external_policy,
-            random_seeds=self.agent.random_seeds,
-        )
-        trainer = Trainer(
-            agent=agent,
-            net=net,
-            game=game,
-            n_games_per_train=self.trainer.n_games_per_train,
-            n_past_iterations_to_train=self.trainer.n_past_iterations_to_train,
-            n_procs=self.trainer.n_procs,
-            checkpoint_dir=self.trainer.checkpoint_dir,
-            use_tree_reuse=True,
-        )
-        evaluator = Evaluator(
-            n_games=self.evaluator.n_games,
-            n_procs=self.evaluator.n_procs,
-        )
+        net = self._make_net(game, extra_features=2)
+        agent, trainer, evaluator = self._make_training_stack(game, net)
         return game, net, agent, trainer, evaluator

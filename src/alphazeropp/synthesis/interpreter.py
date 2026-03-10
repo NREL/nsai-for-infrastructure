@@ -1,5 +1,5 @@
 """
-Interpreter for the BitString decision-list DSL.
+Interpreter for the decision-list DSL.
 
 Provides:
   eval_condition(cond, state) -> bool
@@ -125,7 +125,7 @@ class EpisodeResult:
     total_interp_ops: int
     final_state: np.ndarray
     cumulative_reward: float
-    solved: bool  # all bits == 1
+    solved: bool
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ def _trace_rules(program: Program, state: np.ndarray) -> list[str]:
 def _condition_fail_detail(cond: Condition, state: np.ndarray) -> str:
     """Short explanation of why a condition evaluated to its result."""
     if isinstance(cond, IsZero):
-        return f"bit {cond.index} = {int(state[cond.index])}"
+        return f"obs[{cond.index}] = {int(state[cond.index])}"
     elif isinstance(cond, Not):
         inner = eval_condition(cond.child, state)
         return f"child={inner}"
@@ -190,15 +190,17 @@ def run_policy_episode(
     program: Program,
     x0: Optional[np.ndarray] = None,
     verbose: bool = False,
-    is_solved: Optional[Callable[[np.ndarray], bool]] = None,
+    *,
+    is_solved: Callable[[np.ndarray], bool],
 ) -> EpisodeResult:
     """Run the DSL program as a policy on the environment.
 
     Args:
-        env: A BitStringGym or ShapedBitStringGym instance.
+        env: A Gymnasium-compatible environment.
         program: A Program (Ite or Default) AST node.
         x0: Optional initial state override (copied into env after reset).
         verbose: If True, log detailed execution trace at DEBUG level.
+        is_solved: Callable that checks if an observation is a solved state.
 
     Returns:
         EpisodeResult with per-step records and summary statistics.
@@ -256,8 +258,7 @@ def run_policy_episode(
         total_interp_ops=total_interp,
         final_state=obs.copy(),
         cumulative_reward=cumulative_reward,
-        solved=(is_solved(obs) if is_solved is not None
-                else bool(np.all(obs == 1.0))),
+        solved=is_solved(obs),
     )
 
     if verbose:

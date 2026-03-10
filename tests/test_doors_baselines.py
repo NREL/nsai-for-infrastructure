@@ -165,18 +165,12 @@ class TestOptimalDSLBaseline:
         actions = [step.action for step in dsl_result.steps]
         assert actions == [1, 4, 3]
 
-    def test_dsl_without_is_solved_callback(self):
-        """Without is_solved callback, solved=False despite correct reward.
-
-        Documents the pitfall: run_policy_episode defaults to
-        np.all(obs == 1.0), which fails for Doors (solved state
-        is [0,0,0,1,1,1,0]).
-        """
+    def test_dsl_without_is_solved_callback_raises(self):
+        """Omitting is_solved raises TypeError (keyword-only, required)."""
         env = DoorsPDDLLiteEnv.make_d2()
         program = _build_optimal_program()
-        result = run_policy_episode(env, program)  # no is_solved
-        assert result.solved is False
-        assert result.cumulative_reward == pytest.approx(1.07, abs=0.001)
+        with pytest.raises(TypeError):
+            run_policy_episode(env, program)  # no is_solved
 
 
 # ---------------------------------------------------------------------------

@@ -403,7 +403,7 @@ def print_episode_traces(
     for i, x0 in enumerate(inits):
         env = cfg.make_env(n_sites, frozen_states=[x0])
         env.reset()
-        result = run_policy_episode(env, program)
+        result = run_policy_episode(env, program, is_solved=lambda obs: bool(np.all(obs == 1.0)))
         state_str = "[" + ", ".join(str(int(b)) for b in x0) + "]"
 
         if i == 0:
@@ -658,10 +658,10 @@ def _plot_comparison(
     for x0 in inits:
         env_b = cfg.make_env(n_sites, frozen_states=[x0])
         env_b.reset()
-        res_b = run_policy_episode(env_b, best_program)
+        res_b = run_policy_episode(env_b, best_program, is_solved=lambda obs: bool(np.all(obs == 1.0)))
         env_w = cfg.make_env(n_sites, frozen_states=[x0])
         env_w.reset()
-        res_w = run_policy_episode(env_w, worst_prog)
+        res_w = run_policy_episode(env_w, worst_prog, is_solved=lambda obs: bool(np.all(obs == 1.0)))
         if res_b.solved and not res_w.solved:
             chosen_x0 = x0
             break
@@ -670,10 +670,10 @@ def _plot_comparison(
 
     env_b = cfg.make_env(n_sites, frozen_states=[chosen_x0])
     env_b.reset()
-    best_result = run_policy_episode(env_b, best_program)
+    best_result = run_policy_episode(env_b, best_program, is_solved=lambda obs: bool(np.all(obs == 1.0)))
     env_w = cfg.make_env(n_sites, frozen_states=[chosen_x0])
     env_w.reset()
-    worst_result = run_policy_episode(env_w, worst_prog)
+    worst_result = run_policy_episode(env_w, worst_prog, is_solved=lambda obs: bool(np.all(obs == 1.0)))
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
