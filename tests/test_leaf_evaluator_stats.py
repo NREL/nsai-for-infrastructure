@@ -30,6 +30,11 @@ N_SITES = 3
 N_ONES = 2
 
 
+def _bitstring_is_solved(obs: np.ndarray) -> bool:
+    """Picklable solved check: all observation values are 1."""
+    return bool(np.all(obs == 1.0))
+
+
 @pytest.fixture
 def game_config():
     return GameConfig(bit_flip=True, sparse_reward=False, n_ones=N_ONES)
@@ -42,7 +47,8 @@ def frozen_states():
 
 @pytest.fixture
 def leaf_eval(frozen_states, game_config):
-    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward")
+    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward",
+                         is_solved=_bitstring_is_solved)
 
 
 def _make_program(idx: int) -> Ite:
@@ -214,7 +220,8 @@ class TestNoMultiplicativeGrowth:
         work_per_task = 3  # programs evaluated per task
 
         main_eval = LeafEvaluator(
-            N_SITES, frozen_states, game_config, metric="avg_reward"
+            N_SITES, frozen_states, game_config, metric="avg_reward",
+            is_solved=_bitstring_is_solved,
         )
 
         for iteration in range(5):

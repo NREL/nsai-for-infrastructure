@@ -47,7 +47,8 @@ def frozen_states():
 
 @pytest.fixture
 def leaf_eval(frozen_states, game_config):
-    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward")
+    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward",
+                         is_solved=lambda obs: bool(np.all(obs == 1.0)))
 
 
 def _make_game(leaf_eval):

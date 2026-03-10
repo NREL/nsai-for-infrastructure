@@ -1,7 +1,7 @@
 """
 Leaf evaluator for MCTS-guided program synthesis.
 
-Evaluates complete DSL programs on frozen BitString initial states,
+Evaluates complete DSL programs on frozen initial states,
 returning a scalar value for MCTS to back-propagate. Results are cached
 by program structure (via pretty()) to avoid redundant evaluation.
 
@@ -30,7 +30,7 @@ VALID_METRICS = ("avg_reward", "solve_rate", "penalized_reward", "weighted",
 
 
 class LeafEvaluator:
-    """Evaluates complete DSL programs on frozen BitString initial states.
+    """Evaluates complete DSL programs on frozen initial states.
 
     When MCTS reaches a terminal DerivationState (complete program),
     this runs the program on all frozen initial states and returns
@@ -41,11 +41,12 @@ class LeafEvaluator:
         self,
         n_sites: int,
         frozen_states: Sequence[np.ndarray],
-        game_config,
+        game_config,  # satisfies DSLGameConfig protocol (see protocols.py)
+        *,
+        is_solved: Callable[[np.ndarray], bool],
         metric: str = "avg_reward",
         penalty_lambda: float = 0.1,
         blend_alpha: float = 0.5,
-        is_solved: Optional[Callable[[np.ndarray], bool]] = None,
         normalize_rewards: bool = False,
         progress_fn: Optional[Callable[[np.ndarray], float]] = None,
     ):

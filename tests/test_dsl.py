@@ -27,6 +27,11 @@ from alphazeropp.instances.bitstring.shaped_env import ShapedBitStringGym
 from alphazeropp.instances.bitstring.potentials import onemax
 
 
+def _all_ones(obs: np.ndarray) -> bool:
+    """BitString solved check: all observation values are 1."""
+    return bool(np.all(obs == 1.0))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -280,7 +285,7 @@ class TestBehavioral:
         base_env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
         env = ShapedBitStringGym(base_env, onemax, "dense_potential")
         env.reset(seed=seed)
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         assert result.solved, \
             f"Greedy OneMax failed to solve (seed={seed})"
 
@@ -291,7 +296,7 @@ class TestBehavioral:
         prog = _make_greedy_onemax(n_sites)
         base_env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
         env = ShapedBitStringGym(base_env, onemax, "dense_potential")
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         assert result.total_env_steps == n_sites - n_ones, \
             f"Expected {n_sites - n_ones} steps, got {result.total_env_steps}"
 
@@ -301,7 +306,7 @@ class TestBehavioral:
         prog = _make_greedy_onemax(n_sites)
         base_env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
         env = ShapedBitStringGym(base_env, onemax, "dense_potential")
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         assert result.cumulative_reward > 0, \
             f"Expected positive reward, got {result.cumulative_reward}"
 
@@ -311,7 +316,7 @@ class TestBehavioral:
         prog = _make_greedy_onemax(n_sites)
         base_env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
         env = ShapedBitStringGym(base_env, onemax, "dense_potential")
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         manual_total = sum(s.interp_ops for s in result.steps)
         assert result.total_interp_ops == manual_total
 
@@ -326,7 +331,7 @@ class TestEpisodeRunner:
         n_sites = 4
         prog = Default(Flip(0))
         env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         assert isinstance(result.total_env_steps, int)
         assert isinstance(result.total_interp_ops, int)
         assert isinstance(result.cumulative_reward, float)
@@ -340,7 +345,7 @@ class TestEpisodeRunner:
         prog = _make_greedy_onemax(n_sites)
         env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
         x0 = np.array([1.0, 1.0, 0.0, 0.0])
-        result = run_policy_episode(env, prog, x0=x0)
+        result = run_policy_episode(env, prog, x0=x0, is_solved=_all_ones)
         # Exactly 2 zero bits to fix
         assert result.total_env_steps == 2
         assert result.solved
@@ -351,7 +356,7 @@ class TestEpisodeRunner:
         n_sites = 4
         prog = Ite(IsZero(0), Flip(0), Default(Flip(1)))
         env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
-        result = run_policy_episode(env, prog, verbose=True)
+        result = run_policy_episode(env, prog, verbose=True, is_solved=_all_ones)
         assert result.total_env_steps > 0
 
     def test_format_trace_output(self):
@@ -359,7 +364,7 @@ class TestEpisodeRunner:
         n_sites = 4
         prog = _make_greedy_onemax(n_sites)
         env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         text = format_trace(result, program=prog)
         assert "=== Policy ===" in text
         assert "=== Summary ===" in text
@@ -371,7 +376,7 @@ class TestEpisodeRunner:
         n_sites = 4
         prog = _make_greedy_onemax(n_sites)
         env = BitStringGym(n_sites=n_sites, bit_flip=True, sparse_reward=False)
-        result = run_policy_episode(env, prog)
+        result = run_policy_episode(env, prog, is_solved=_all_ones)
         assert result.solved
 
 

@@ -1,5 +1,5 @@
 """
-Size-budget grammar for enumerating BitString DSL programs.
+Size-budget grammar for enumerating decision-list DSL programs.
 
 Provides:
   ProgramHole, ConditionHole     — hole placeholders for partial derivations

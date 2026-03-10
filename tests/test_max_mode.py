@@ -48,7 +48,8 @@ N_ONES = 2
 def leaf_eval():
     cfg = GameConfig(bit_flip=True, sparse_reward=False, n_ones=N_ONES)
     frozen = all_initial_states(N_SITES, N_ONES)
-    return LeafEvaluator(N_SITES, frozen, cfg, metric="avg_reward")
+    return LeafEvaluator(N_SITES, frozen, cfg, metric="avg_reward",
+                         is_solved=lambda obs: bool(np.all(obs == 1.0)))
 
 
 # ---------------------------------------------------------------------------

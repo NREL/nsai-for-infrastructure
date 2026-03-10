@@ -46,7 +46,8 @@ def frozen_states():
 
 @pytest.fixture
 def leaf_eval(frozen_states, game_config):
-    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward")
+    return LeafEvaluator(N_SITES, frozen_states, game_config, metric="avg_reward",
+                         is_solved=lambda obs: bool(np.all(obs == 1.0)))
 
 
 @pytest.fixture
@@ -214,7 +215,8 @@ class TestLeafEvaluator:
 
     def test_metric_solve_rate(self, frozen_states, game_config):
         eval_sr = LeafEvaluator(
-            N_SITES, frozen_states, game_config, metric="solve_rate"
+            N_SITES, frozen_states, game_config, metric="solve_rate",
+            is_solved=lambda obs: bool(np.all(obs == 1.0)),
         )
         prog = Ite(IsZero(0), Flip(0),
                     Ite(IsZero(1), Flip(1), Default(Flip(2))))
@@ -225,6 +227,7 @@ class TestLeafEvaluator:
         eval_pr = LeafEvaluator(
             N_SITES, frozen_states, game_config,
             metric="penalized_reward", penalty_lambda=0.1,
+            is_solved=lambda obs: bool(np.all(obs == 1.0)),
         )
         prog = Default(Flip(0))
         value = eval_pr(prog)
@@ -236,6 +239,7 @@ class TestLeafEvaluator:
         eval_w = LeafEvaluator(
             N_SITES, frozen_states, game_config,
             metric="weighted", blend_alpha=0.5,
+            is_solved=lambda obs: bool(np.all(obs == 1.0)),
         )
         prog = Default(Flip(0))
         value = eval_w(prog)

@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
+
+def _bitstring_is_solved(obs: np.ndarray) -> bool:
+    """Picklable solved check for bitstring: all values are 1."""
+    return bool(np.all(obs == 1.0))
+
+
 from alphazeropp.core.config import (
     MetaConfig,
     GameConfig as CoreGameConfig,
@@ -133,6 +141,7 @@ class DerivationConfig(MetaConfig):
             metric=gk["metric"],
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
+            is_solved=_bitstring_is_solved,
         )
 
         # 2. DerivationGame
@@ -275,6 +284,7 @@ class ScanDerivationConfig(MetaConfig):
             metric=gk["metric"],
             penalty_lambda=gk["penalty_lambda"],
             blend_alpha=gk["blend_alpha"],
+            is_solved=_bitstring_is_solved,
         )
 
         # 2. ScanDerivationGame
