@@ -16,21 +16,16 @@ import logging
 import sys
 
 from alphazeropp.benchmark.run import main as run_main
+from alphazeropp.instances.doors.oracle import reachable_state_count
 
 
 logger = logging.getLogger(__name__)
 
-# Default episode budgets for tabular_q by D
-_TABULAR_Q_BUDGETS = {
-    2: 500,
-    3: 2000,
-    5: 5000,
-}
-_TABULAR_Q_DEFAULT_BUDGET = 10000
 
-
-def _tabular_q_budget(D: int) -> int:
-    return _TABULAR_Q_BUDGETS.get(D, _TABULAR_Q_DEFAULT_BUDGET)
+def _tabular_q_budget(D: int, locs_per_room: int = 2) -> int:
+    """Auto-scale training episodes based on state space size."""
+    n_states = reachable_state_count(D, locs_per_room)
+    return max(500, n_states * 20)
 
 
 def main(argv=None):
@@ -48,10 +43,14 @@ def main(argv=None):
     parser.add_argument("--mask-mode", default="none",
                         choices=["none", "precondition"],
                         help="Action masking mode")
+    parser.add_argument("--locs-per-room", type=int, default=2,
+                        help="Locations per room")
     parser.add_argument("--eval-episodes", type=int, default=50,
                         help="Evaluation episodes per checkpoint")
     parser.add_argument("--eval-interval", type=int, default=None,
                         help="Eval interval for learning algos (default: budget/5)")
+    parser.add_argument("--total-iterations", type=int, default=None,
+                        help="Override training budget for learning algos")
     parser.add_argument("--output-dir", default="experiments/benchmark",
                         help="Output directory")
     parser.add_argument("--plot", action="store_true",
@@ -82,20 +81,23 @@ def main(argv=None):
                     "--D", str(D),
                     "--seed", str(seed),
                     "--mask-mode", args.mask_mode,
+                    "--locs-per-room", str(args.locs_per_room),
                     "--eval-episodes", str(args.eval_episodes),
                     "--output-dir", args.output_dir,
                 ]
 
                 # Set training budget for learning algorithms
                 if algo in ("tabular_q",):
-                    budget = _tabular_q_budget(D)
+                    budget = (args.total_iterations
+                              or _tabular_q_budget(D, args.locs_per_room))
                     interval = args.eval_interval or max(1, budget // 5)
                     run_args += [
                         "--total-iterations", str(budget),
                         "--eval-interval", str(interval),
                     ]
                 elif algo in ("alphazero",):
-                    run_args += ["--total-iterations", "50"]
+                    budget = args.total_iterations or 50
+                    run_args += ["--total-iterations", str(budget)]
                     if args.eval_interval:
                         run_args += ["--eval-interval", str(args.eval_interval)]
 

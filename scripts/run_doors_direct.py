@@ -32,6 +32,44 @@ from alphazeropp.utils.interactive_config import (
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint helpers
+# ---------------------------------------------------------------------------
+
+def _save_checkpoint(ckpt_path, trainer, agent, net):
+    """Save training state: network weights + replay buffer + RNG state."""
+    import pickle
+    import torch
+    ckpt_path = Path(ckpt_path)
+    ckpt_path.mkdir(parents=True, exist_ok=True)
+    # Network weights
+    torch.save(net.model.state_dict(), ckpt_path / "network.pt")
+    # Training replay buffer + RNG state
+    with open(ckpt_path / "trainer_state.pkl", "wb") as f:
+        pickle.dump({
+            "all_training_examples": trainer.all_training_examples,
+            "rngs": agent.rngs,
+            "random_seeds": agent.random_seeds,
+        }, f)
+
+
+def _load_checkpoint(ckpt_path, trainer, agent, net):
+    """Load training state from checkpoint."""
+    import pickle
+    import torch
+    ckpt_path = Path(ckpt_path)
+    # Network weights
+    state_dict = torch.load(ckpt_path / "network.pt",
+                            map_location=net.DEVICE, weights_only=True)
+    net.model.load_state_dict(state_dict)
+    # Training replay buffer + RNG state
+    with open(ckpt_path / "trainer_state.pkl", "rb") as f:
+        state = pickle.load(f)
+    trainer.all_training_examples = state["all_training_examples"]
+    agent.rngs = state["rngs"]
+    agent.random_seeds = state["random_seeds"]
+
+
+# ---------------------------------------------------------------------------
 # Interactive config editing
 # ---------------------------------------------------------------------------
 
@@ -1089,7 +1127,7 @@ def _plot_seed_comparison(logs, seeds, exp_dir, optimal_reward=None,
 # Single-seed training run
 # ---------------------------------------------------------------------------
 
-def _run_single_seed(cfg, exp_dir, eval_ablation=None):
+def _run_single_seed(cfg, exp_dir, eval_ablation=None, resume_from=None):
     """Run a single-seed training loop. Returns iteration_log."""
     num_rooms = cfg.game.kwargs.get("num_rooms", 2)
     game, net, agent, trainer, evaluator = cfg.build()
@@ -1097,9 +1135,45 @@ def _run_single_seed(cfg, exp_dir, eval_ablation=None):
     gated = GatedTrainer(trainer, evaluator, cfg.run.accept_threshold) if use_gating else None
 
     iteration_log = []
+    start_iter = 0
     best_solve_rate = 0.0
     best_solve_iter = 0
     n_accepted = 0
+
+    # Resume from checkpoint if requested
+    if resume_from:
+        resume_dir = Path(resume_from)
+        # Load iteration log to find where we left off
+        log_path = resume_dir / "iteration_log.jsonl"
+        if log_path.exists():
+            with open(log_path) as f:
+                for line in f:
+                    iteration_log.append(json.loads(line))
+            start_iter = len(iteration_log)
+            best_solve_rate = max((e["solve_rate"] for e in iteration_log), default=0.0)
+            best_solve_iter = max(
+                (e["iteration"] for e in iteration_log
+                 if e["solve_rate"] == best_solve_rate), default=0)
+            n_accepted = sum(1 for e in iteration_log if e.get("accepted", True))
+
+        # Find latest checkpoint
+        ckpt_dirs = sorted(
+            (resume_dir / "checkpoints").glob("iter_*"),
+            key=lambda p: int(p.name.split("_")[1]),
+        ) if (resume_dir / "checkpoints").exists() else []
+        if ckpt_dirs:
+            latest_ckpt = ckpt_dirs[-1]
+            if (latest_ckpt / "network.pt").exists():
+                _load_checkpoint(latest_ckpt, trainer, agent, net)
+                print(f"Resumed from {latest_ckpt} (iteration {start_iter})")
+            else:
+                print(f"WARNING: Checkpoint {latest_ckpt} invalid, starting fresh")
+                start_iter = 0
+                iteration_log = []
+        elif start_iter > 0:
+            print(f"WARNING: No checkpoints found, but log has {start_iter} iterations. Starting fresh.")
+            start_iter = 0
+            iteration_log = []
     optimal = _optimal_reward(num_rooms,
                               cfg.game.kwargs.get("step_penalty", 0.01),
                               cfg.game.kwargs.get("unlock_bonus", 0.1))
@@ -1109,7 +1183,7 @@ def _run_single_seed(cfg, exp_dir, eval_ablation=None):
     plot_title = (f"Doors D={num_rooms} Direct Play\n"
                   f"sims={n_sims} games={n_games} iters={n_iters}")
 
-    for i in range(cfg.run.n_iterations):
+    for i in range(start_iter, cfg.run.n_iterations):
         t0 = time.time()
         print_iteration_header(i + 1, cfg.run.n_iterations)
 
@@ -1175,6 +1249,15 @@ def _run_single_seed(cfg, exp_dir, eval_ablation=None):
         with open(exp_dir / "iteration_log.jsonl", "w") as f:
             for e in iteration_log:
                 f.write(json.dumps(e) + "\n")
+
+        # Save checkpoint (keep last 2 only)
+        ckpt_path = exp_dir / "checkpoints" / f"iter_{i + 1}"
+        _save_checkpoint(ckpt_path, trainer, agent, net)
+        # Clean up old checkpoints
+        old_ckpt = exp_dir / "checkpoints" / f"iter_{i - 1}"
+        if old_ckpt.exists():
+            import shutil
+            shutil.rmtree(old_ckpt)
 
         # Plot periodically
         eval_stats = evaluator.statistics_manager if use_gating else None
@@ -1280,6 +1363,22 @@ def parse_args():
     parser.add_argument("--eval-ablation", type=str, default=None,
                         choices=ABLATION_MODES,
                         help="Eval-only ablation mode (training unchanged)")
+    parser.add_argument("--D", type=int, default=None,
+                        help="Number of rooms (overrides config default)")
+    parser.add_argument("--locs-per-room", type=int, default=None,
+                        help="Locations per room (overrides config default)")
+    parser.add_argument("--n-iterations", type=int, default=None,
+                        help="Training iterations (overrides config default)")
+    parser.add_argument("--resume-from", type=str, default=None,
+                        help="Resume from an existing experiment directory")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress banner/architecture output (used by sweep)")
+    parser.add_argument("--n-procs", type=int, default=None,
+                        help="Number of parallel workers for self-play and eval (overrides config default of 8)")
+    parser.add_argument("--n-simulations", type=int, default=None,
+                        help="MCTS simulations per move (overrides config default of 120)")
+    parser.add_argument("--n-games-per-train", type=int, default=None,
+                        help="Self-play games per training iteration (overrides config default of 50)")
     return parser.parse_args()
 
 
@@ -1296,7 +1395,18 @@ def main():
     default_seed = str(args.seeds[0]) if args.seeds else "43"
     seed_state = {"seeds_str": default_seed}
 
-    cfg = DoorsDirectConfig()
+    num_rooms = args.D or 10
+    locs = args.locs_per_room or 3
+    cfg = DoorsDirectConfig(num_rooms=num_rooms, locs_per_room=locs)
+    if args.n_iterations is not None:
+        cfg.run.n_iterations = args.n_iterations
+    if args.n_procs is not None:
+        cfg.trainer.n_procs = args.n_procs
+        cfg.evaluator.n_procs = args.n_procs
+    if args.n_simulations is not None:
+        cfg.agent.mcts_params["n_simulations"] = args.n_simulations
+    if args.n_games_per_train is not None:
+        cfg.trainer.n_games_per_train = args.n_games_per_train
 
     # Interactive config editing
     if not args.non_interactive:
@@ -1311,15 +1421,22 @@ def main():
 
     # Setup experiment directory
     eval_ablation = args.eval_ablation
-    exp_dir = setup_experiment_dir(cfg, eval_ablation=eval_ablation)
+    resume_from = args.resume_from
+    if resume_from:
+        exp_dir = Path(resume_from)
+        cfg.trainer.checkpoint_dir = str(exp_dir / "checkpoints")
+        cfg.run.plot_path = str(exp_dir / "training_metrics.png")
+    else:
+        exp_dir = setup_experiment_dir(cfg, eval_ablation=eval_ablation)
 
     # Build a temporary game for banner display (needs env for layout info)
     from alphazeropp.instances.doors.game import DoorsDirectGame
     _banner_game = DoorsDirectGame(**cfg.game.kwargs)
 
     # Print startup info
-    print_banner(cfg, _banner_game, exp_dir)
-    print_architecture(cfg)
+    if not args.quiet:
+        print_banner(cfg, _banner_game, exp_dir)
+        print_architecture(cfg)
 
     # Save config
     cfg.save(str(exp_dir / "config.json"))
@@ -1337,7 +1454,8 @@ def main():
                 "mcts": s, "train": s + 1,
                 "eval": s + 2, "external_policy": s + 3,
             }
-        _run_single_seed(cfg, exp_dir, eval_ablation=eval_ablation)
+        _run_single_seed(cfg, exp_dir, eval_ablation=eval_ablation,
+                         resume_from=resume_from)
     else:
         # Multi-seed run
         seed_dirs = {}

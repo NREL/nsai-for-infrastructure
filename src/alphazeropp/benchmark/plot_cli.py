@@ -40,6 +40,8 @@ def main(argv=None):
                         help="Directory containing CSV result files")
     parser.add_argument("--table-only", action="store_true",
                         help="Only print summary table, skip plots")
+    parser.add_argument("--D", type=int, nargs="*", default=None,
+                        help="Filter to specific D values (default: all)")
     parser.add_argument("--x-axis", default="train_episodes",
                         help="X-axis field for learning curves")
 
@@ -65,6 +67,8 @@ def main(argv=None):
 
     # Generate per-D plots
     d_groups = _group_csvs_by_d(csv_paths)
+    if args.D is not None:
+        d_groups = {d: v for d, v in d_groups.items() if d in args.D}
 
     for D in sorted(d_groups.keys()):
         d_csvs = d_groups[D]
